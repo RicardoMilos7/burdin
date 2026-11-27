@@ -23,7 +23,7 @@ impl FnCx<'_> {
             K::Unary(_, x) | K::Cast(x) => self.is_const_condition(x),
             K::Binary(_, a, b) => self.is_const_condition(a) && self.is_const_condition(b),
             K::Variant(_, fields) => fields.iter().all(|(_, f)| self.is_const_condition(f)),
-            K::Call(f, args) => self.globals.is_target_fn(*f) && args.iter().all(|a| self.is_const_condition(a)),
+            K::Call(f, args, _) => self.globals.is_target_fn(*f) && args.iter().all(|a| self.is_const_condition(a)),
             _ => false,
         }
     }

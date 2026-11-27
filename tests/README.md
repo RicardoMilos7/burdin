@@ -282,12 +282,12 @@ unassigned, stale, or owned by a milestone that has shipped.
 | E0210 | Invalid `error` declaration: a `from` variant that is not a tuple variant with exactly one field, `from` on a generic error enum, or a message placeholder that does not name a payload field |
 | E0211 | Two conversions into one type take the same source type: two variants of one error enum, or two `From` or two `TryFrom` blocks |
 | E0212 | An error conversion is missing: `?` between two error types with no `From` block, an implicit conversion into `AnyError` from a type that does not implement `Error`, or `.context` on a `Result` whose error type is not an error type |
-| E0213 | Invalid default argument: a default before a required parameter, on a `mut` parameter, in an interface signature or an `extern` declaration, depending on a type parameter, or not a constant expression |
+| E0213 | Invalid default argument: a default before a required parameter, on a `mut` parameter, in an interface signature or an `extern` declaration, or depending on a type parameter |
 | E0214 | Invalid named argument: a name no parameter has, a parameter named more than once, a positional argument after a named one, or a name on a callee that takes none |
 | E0215 | Warning: an extension method is shadowed by a method of its receiver type; calls use the method |
 | E0216 | Invalid extension method declaration: no `self` first parameter, or a receiver path with type arguments on a segment other than the type, or a `where` clause naming something that is not one of its type parameters |
 | E0220 | Invalid compile-time construct: `break` or `continue` leaving an unrolled reflection loop (`for` over `Type.fields` or `Type.variants`), or a `static` named in a `const` initializer |
-| E0221 | A `const` whose type cannot be materialized in the program (a `List`, `Map`, `Heap`, `any`, closure, reference, slice, C type, or iterator, or an aggregate holding one) |
+| E0221 | A `const` or default argument whose type cannot be materialized in the program (a `List`, `Map`, `Heap`, `any`, closure, reference, slice, C type, or iterator, or an aggregate holding one) |
 | E0222 | Compile-time evaluation panicked |
 | E0224 | An impure operation (output, files, the environment, processes, or C) during compile-time evaluation |
 | E0225 | Compile-time evaluation exceeded its step budget or its call depth |
@@ -489,14 +489,16 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
     `spec/errors.md` ERR1-ERR10, `tests/m16_errors/`.
 
 22. **Default and named arguments.** A parameter written `name: Type = expr` may be omitted at the call site. A
-    default is a constant expression checked once at the declaration (parameters and `self` are not in scope),
-    it cannot depend on a type parameter, and only trailing parameters may have one; a `mut` parameter, an
-    interface method signature, and an `extern` declaration cannot declare one (E0213). A call may write
-    `name: value` for any function, method, interface method, associated function, or generic function/method;
-    positional arguments fill the leading parameters and may not follow a named one, an unknown or repeated
-    name is E0214, and a missing required argument is E0004. Built-in functions and methods, constructors,
-    closure values, and `extern` declarations take no named arguments. Every argument is evaluated left to
-    right in parameter order, a default in the position of its parameter.
+    default is a compile-time constant expression checked and evaluated once at the declaration with the same rules
+    as `const` (parameters, `self`, and locals are not in scope; any pure expression of a materializable type is
+    accepted, E0221 if not materializable, E0222/E0224/E0225 on compile-time panic/impurity/budget), it cannot
+    depend on a type parameter, and only trailing parameters may have one; a `mut` parameter, an interface method
+    signature, and an `extern` declaration cannot declare one (E0213). A call may write `name: value` for any
+    function, method, interface method, associated function, or generic function/method; positional arguments fill
+    the leading parameters and may not follow a named one, an unknown or repeated name is E0214, and a missing
+    required argument is E0004. Built-in functions and methods, constructors, closure values, and `extern`
+    declarations take no named arguments. Every written argument is evaluated left to right in source order, after
+    any method receiver; omitted defaults are compile-time constants with no side effects.
     `spec/arguments.md` AG1-AG7, `tests/m17_arguments/`.
 
 23. **Extension methods.** `fn Type.name(self, ...)` at module scope declares a method on any type name in scope,

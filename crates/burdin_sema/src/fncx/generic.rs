@@ -169,10 +169,10 @@ impl FnCx<'_> {
         };
         // The checked expressions, in written order, one per written argument; `args_pre` fills the defaults.
         let written: Vec<tir::Expr> = checked.into_iter().flatten().collect();
-        let Some(checked) = self.args_pre(&id.name, &params, args, None, span, Some(written)) else {
+        let Some(checked) = self.args_pre_ordered(&id.name, &params, args, None, span, Some(written)) else {
             return error_expr(span);
         };
-        mk(tir::ExprKind::Call(callee, checked), ret, span)
+        mk(tir::ExprKind::Call(callee, checked.args, checked.order), ret, span)
     }
 
     /// The bindings an explicit type-argument list gives a call (`f<T>(...)`, `spec/arguments.md`, TA1-TA4): one per
@@ -291,7 +291,7 @@ impl FnCx<'_> {
         };
         let Some((mut checked, ret)) = checked else { return error_expr(span) };
         checked.insert(0, recv);
-        mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span)
+        mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked, Vec::new()), ret, span)
     }
 
     /// The arguments of a call to a method that a bound provides and that has type parameters of its own
@@ -387,7 +387,7 @@ impl FnCx<'_> {
         expect: Option<&Ty>,
     ) -> tir::Expr {
         if name.name == "default" && args.is_empty() && self.param_has(ty, Bound::Default) {
-            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, Vec::new()), ty.clone(), span);
+            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, Vec::new(), Vec::new()), ty.clone(), span);
         }
         if name.name == "from"
             && args.len() == 1
@@ -425,7 +425,7 @@ impl FnCx<'_> {
             None => self.args(&name.name, &sig.params, args, None, span).map(|c| (c, sig.ret)),
         };
         let Some((checked, ret)) = checked else { return error_expr(span) };
-        mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span)
+        mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked, Vec::new()), ret, span)
     }
 
     /// `T.from(v)` in a generic body: `T` has a `From<S>` bound and `v` is of type `S` (FR7). The call is a placeholder
@@ -460,7 +460,7 @@ impl FnCx<'_> {
             self.diags.error(Code::TYPE_MISMATCH, value.span, message);
             return Some(error_expr(span));
         }
-        Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![value]), ty.clone(), span))
+        Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![value], Vec::new()), ty.clone(), span))
     }
 
     /// `T.try_from(v)` in a generic body: `T` has a `TryFrom<S>` bound and `v` is of type `S` (TF7). The result is
@@ -497,7 +497,7 @@ impl FnCx<'_> {
         }
         let err = Ty::TryFromError { self_ty: Box::new(ty.clone()), source: Box::new(value.ty.clone()) };
         let ret = self.globals.result_ty(ty.clone(), err);
-        Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![value]), ret, span))
+        Some(mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![value], Vec::new()), ret, span))
     }
 
     /// The instance of generic type `g` once the arguments are known: from `bindings`, and from the expected type
@@ -682,10 +682,10 @@ impl FnCx<'_> {
             return self.generic_assoc_method_call(info, &name.name, explicit, args, Some(checked), span, expect);
         }
         let sig = globals.sigs[func.0].clone();
-        let Some(checked) = self.args_pre(&name.name, &sig.params, args, None, span, Some(checked)) else {
+        let Some(checked) = self.args_pre_ordered(&name.name, &sig.params, args, None, span, Some(checked)) else {
             return error_expr(span);
         };
-        mk(tir::ExprKind::Call(func, checked), sig.ret, span)
+        mk(tir::ExprKind::Call(func, checked.args, checked.order), sig.ret, span)
     }
 
     /// `Wrapper { inner: value }` for a generic struct: the type arguments come from the field values.
@@ -1076,11 +1076,11 @@ impl FnCx<'_> {
             let rest: Vec<ParamSig> = pattern.params[1..].iter().map(|p| globals.subst_param(p, &subst)).collect();
             let ret = globals.subst_ty(&pattern.ret, &subst);
             let receiver_place = Some((&recv, receiver.exclusive));
-            let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(written)) else {
+            let Some(checked) = self.args_pre_ordered(name, &rest, args, receiver_place, span, Some(written)) else {
                 return error_expr(span);
             };
-            checked.insert(0, recv);
-            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span);
+            let checked = checked.with_receiver(recv);
+            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked.args, checked.order), ret, span);
         }
         let Some(&f) = globals.method_instances.get(&(info.template, targs.clone())) else {
             globals.requests.borrow_mut().push(Request::Method(info.template, targs));
@@ -1089,11 +1089,11 @@ impl FnCx<'_> {
         let sig = globals.sigs[f.0].clone();
         let rest = sig.params[1..].to_vec();
         let receiver_place = Some((&recv, receiver.exclusive));
-        let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(written)) else {
+        let Some(checked) = self.args_pre_ordered(name, &rest, args, receiver_place, span, Some(written)) else {
             return error_expr(span);
         };
-        checked.insert(0, recv);
-        mk(tir::ExprKind::Call(f, checked), sig.ret, span)
+        let checked = checked.with_receiver(recv);
+        mk(tir::ExprKind::Call(f, checked.args, checked.order), sig.ret, span)
     }
 
     /// A call to an associated function that has type parameters of its own (`Set<i32>.from([1, 2])`,
@@ -1176,20 +1176,20 @@ impl FnCx<'_> {
         if symbolic {
             let ps: Vec<ParamSig> = pattern.params.iter().map(|p| globals.subst_param(p, &subst)).collect();
             let ret = globals.subst_ty(&pattern.ret, &subst);
-            let Some(checked) = self.args_pre(name, &ps, args, None, span, Some(written)) else {
+            let Some(checked) = self.args_pre_ordered(name, &ps, args, None, span, Some(written)) else {
                 return error_expr(span);
             };
-            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span);
+            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked.args, checked.order), ret, span);
         }
         let Some(&f) = globals.method_instances.get(&(info.template, targs.clone())) else {
             globals.requests.borrow_mut().push(Request::Method(info.template, targs));
             return error_expr(span);
         };
         let sig = globals.sigs[f.0].clone();
-        let Some(checked) = self.args_pre(name, &sig.params, args, None, span, Some(written)) else {
+        let Some(checked) = self.args_pre_ordered(name, &sig.params, args, None, span, Some(written)) else {
             return error_expr(span);
         };
-        mk(tir::ExprKind::Call(f, checked), sig.ret, span)
+        mk(tir::ExprKind::Call(f, checked.args, checked.order), sig.ret, span)
     }
 
     /// A call to a generic function whose first argument is an already-checked receiver (`xs.map(f)` calls the
@@ -1305,11 +1305,11 @@ impl FnCx<'_> {
         if symbolic {
             let rest: Vec<ParamSig> = pattern.params[1..].iter().map(|p| globals.subst_param(p, &subst)).collect();
             let ret = globals.subst_ty(&pattern.ret, &subst);
-            let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(written)) else {
+            let Some(checked) = self.args_pre_ordered(name, &rest, args, receiver_place, span, Some(written)) else {
                 return error_expr(span);
             };
-            checked.insert(0, recv);
-            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked), ret, span);
+            let checked = checked.with_receiver(recv);
+            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, checked.args, checked.order), ret, span);
         }
         let Some(&f) = globals.fn_instances.get(&(g, targs.clone())) else {
             globals.requests.borrow_mut().push(Request::Func(g, targs));
@@ -1317,11 +1317,11 @@ impl FnCx<'_> {
         };
         let sig = globals.sigs[f.0].clone();
         let rest = sig.params[1..].to_vec();
-        let Some(mut checked) = self.args_pre(name, &rest, args, receiver_place, span, Some(written)) else {
+        let Some(checked) = self.args_pre_ordered(name, &rest, args, receiver_place, span, Some(written)) else {
             return error_expr(span);
         };
-        checked.insert(0, recv);
-        mk(tir::ExprKind::Call(f, checked), sig.ret, span)
+        let checked = checked.with_receiver(recv);
+        mk(tir::ExprKind::Call(f, checked.args, checked.order), sig.ret, span)
     }
 }
 

@@ -196,10 +196,10 @@ impl FnCx<'_> {
             ast::ExprKind::Name { name, .. } => name.name.clone(),
             _ => String::new(),
         };
-        let Some(checked) = self.args(&name, &params, args, None, span) else { return error_expr(span) };
+        let Some(checked) = self.args_ordered(&name, &params, args, None, span) else { return error_expr(span) };
         let kind = match target {
-            Callee::User(f) => tir::ExprKind::Call(f, checked),
-            Callee::Builtin(b) => tir::ExprKind::Builtin(b, checked),
+            Callee::User(f) => tir::ExprKind::Call(f, checked.args, checked.order),
+            Callee::Builtin(b) => tir::ExprKind::Builtin(b, checked.args),
         };
         mk(kind, ret, span)
     }
@@ -345,7 +345,7 @@ impl FnCx<'_> {
         else {
             return error_expr(span);
         };
-        mk(tir::ExprKind::Call(f, checked), sig.ret, span)
+        mk(tir::ExprKind::Call(f, checked, Vec::new()), sig.ret, span)
     }
 
     /// The test-build `assert_eq` (`spec/errors.md`, ERR9).
@@ -564,7 +564,7 @@ impl FnCx<'_> {
         let message = self.coerce_arg(message, &Ty::Str);
         let source = mk(tir::ExprKind::Local(err_id), err_ty.clone(), span);
         let source = if err_ty == error_ty { source } else { self.coerce_error(source, &error_ty) };
-        let call = mk(tir::ExprKind::Call(context, vec![source, message]), error_ty.clone(), span);
+        let call = mk(tir::ExprKind::Call(context, vec![source, message], Vec::new()), error_ty.clone(), span);
         let err_body = Globals::mk_result(false, call, result_ty.clone(), span);
         let arms = vec![
             tir::Arm { pat: Pat::Variant(0, vec![Pat::Binding(ok_id, ok_mode)]), guard: None, body: ok_body },
@@ -935,6 +935,19 @@ impl FnCx<'_> {
         self.args_pre(name, params, args, receiver, span, None)
     }
 
+    /// Like [`Self::args`], also returning the source evaluation order when named arguments were written out of
+    /// parameter order (`spec/arguments.md`, AG6).
+    pub(super) fn args_ordered(
+        &mut self,
+        name: &str,
+        params: &[ParamSig],
+        args: &[ast::Arg],
+        receiver: Option<(&tir::Expr, bool)>,
+        span: Span,
+    ) -> Option<CheckedArgs> {
+        self.args_pre_ordered(name, params, args, receiver, span, None)
+    }
+
     /// Like `args`, for arguments that were already checked (a generic call checks them first to infer its type
     /// arguments). `pre` has one entry per written argument, in written order.
     pub(super) fn args_pre(
@@ -946,6 +959,20 @@ impl FnCx<'_> {
         span: Span,
         pre_values: Option<Vec<tir::Expr>>,
     ) -> Option<Vec<tir::Expr>> {
+        self.args_pre_ordered(name, params, args, receiver, span, pre_values).map(|c| c.args)
+    }
+
+    /// Like [`Self::args_pre`], also returning the source evaluation order when named arguments were written out of
+    /// parameter order (`spec/arguments.md`, AG6).
+    pub(super) fn args_pre_ordered(
+        &mut self,
+        name: &str,
+        params: &[ParamSig],
+        args: &[ast::Arg],
+        receiver: Option<(&tir::Expr, bool)>,
+        span: Span,
+        pre_values: Option<Vec<tir::Expr>>,
+    ) -> Option<CheckedArgs> {
         let Some(slots) = self.arg_slots(name, params, args, span) else {
             if pre_values.is_none() {
                 for a in args {
@@ -962,10 +989,22 @@ impl FnCx<'_> {
                 *slot = Some(value);
             }
         }
-        let mut checked = Vec::with_capacity(params.len());
-        // Arguments and defaults are checked (and so evaluated) in parameter order, whatever order they were
-        // written in (`spec/arguments.md`, AG6).
-        for (pi, p) in params.iter().enumerate() {
+        // Build the source evaluation order: every written argument in source order, then omitted defaults
+        // (which are pure compile-time constants) in parameter order (`spec/arguments.md`, AG6).
+        let mut order: Vec<usize> = Vec::with_capacity(params.len());
+        for ai in 0..args.len() {
+            if let Some(pi) = slots.iter().position(|s| *s == Some(ai)) {
+                order.push(pi);
+            }
+        }
+        for (pi, slot) in slots.iter().enumerate() {
+            if slot.is_none() {
+                order.push(pi);
+            }
+        }
+        let mut checked_slots: Vec<Option<tir::Expr>> = (0..params.len()).map(|_| None).collect();
+        for &pi in &order {
+            let p = &params[pi];
             let arg = match slots[pi] {
                 Some(ai) => {
                     let a = &args[ai];
@@ -1029,10 +1068,14 @@ impl FnCx<'_> {
                     Self::attach_mut_fix(fix, d);
                 }
             }
-            checked.push(arg);
+            checked_slots[pi] = Some(arg);
         }
+        let checked: Vec<tir::Expr> = checked_slots.into_iter().map(|e| e.expect("every slot filled")).collect();
         self.exclusivity(receiver, params, &checked, span);
-        Some(checked)
+        if order.iter().copied().eq(0..params.len()) {
+            order.clear();
+        }
+        Some(CheckedArgs { args: checked, order })
     }
 
     /// Matches the written arguments to parameters (`spec/arguments.md`, AG4-AG7): a positional argument fills
@@ -1418,7 +1461,7 @@ impl FnCx<'_> {
             tir::ExprKind::Slice { base, .. } => Some(base),
             tir::ExprKind::Method(tir::Method::AsSlice, args) => args.first(),
             // `List.as_slice()` is a method of `std`'s `List`.
-            tir::ExprKind::Call(f, args) => {
+            tir::ExprKind::Call(f, args, _) => {
                 let list = args.first().filter(|a| self.globals.list_parts(&a.ty).is_some())?;
                 let key = adt_key(&list.ty)?;
                 (self.globals.methods.get(&(key, "as_slice".to_string())) == Some(f)).then_some(list)
@@ -1586,11 +1629,11 @@ impl FnCx<'_> {
                 self.static_mut_borrowed(&recv, recv.span);
             }
             let receiver_place = Some((&recv, receiver.exclusive));
-            let Some(mut checked) = self.args(&name.name, &rest, args, receiver_place, span) else {
+            let Some(checked) = self.args_ordered(&name.name, &rest, args, receiver_place, span) else {
                 return error_expr(span);
             };
-            checked.insert(0, recv);
-            return mk(tir::ExprKind::Call(f, checked), ret, span);
+            let checked = checked.with_receiver(recv);
+            return mk(tir::ExprKind::Call(f, checked.args, checked.order), ret, span);
         }
         if name.name == "hash" && args.is_empty() && self.globals.has_hash_in(&recv.ty, &self.bounds) {
             return mk(tir::ExprKind::Method(Method::Hash, vec![recv]), Ty::Int(IntTy::U64), span);
@@ -1931,11 +1974,11 @@ impl FnCx<'_> {
             self.static_mut_borrowed(&recv, recv.span);
         }
         let receiver_place = Some((&recv, receiver.exclusive));
-        let Some(mut checked) = self.args(&name.name, &rest, args, receiver_place, span) else {
+        let Some(checked) = self.args_ordered(&name.name, &rest, args, receiver_place, span) else {
             return error_expr(span);
         };
-        checked.insert(0, recv);
-        mk(tir::ExprKind::Call(f, checked), sig.ret, span)
+        let checked = checked.with_receiver(recv);
+        mk(tir::ExprKind::Call(f, checked.args, checked.order), sig.ret, span)
     }
 
     /// A struct field of closure type named `name`, for calling `holder.f(x)`. A field whose type is a type
@@ -1968,10 +2011,10 @@ impl FnCx<'_> {
                 self.check_unsafe_call(f, &item.name, item.span);
                 let sig = &self.globals.sigs[f.0];
                 let (params, ret) = (sig.params.clone(), sig.ret.clone());
-                let Some(checked) = self.args(&item.name, &params, args, None, span) else {
+                let Some(checked) = self.args_ordered(&item.name, &params, args, None, span) else {
                     return error_expr(span);
                 };
-                mk(tir::ExprKind::Call(f, checked), ret, span)
+                mk(tir::ExprKind::Call(f, checked.args, checked.order), ret, span)
             }
             Some(Global::Generic(g)) => self.generic_call(g, item, args, explicit, span, expect),
             Some(Global::Extern(e)) => self.extern_call(item, e, args, span),
@@ -2298,7 +2341,7 @@ impl FnCx<'_> {
         let Some(checked) = self.args_pre(method, &sig.params, args, None, span, Some(vec![value])) else {
             return Some(error_expr(span));
         };
-        Some(mk(tir::ExprKind::Call(func, checked), sig.ret, span))
+        Some(mk(tir::ExprKind::Call(func, checked, Vec::new()), sig.ret, span))
     }
 
     /// `Type.function(...)`, `Enum.Variant(...)`, and the built-in types' associated functions.
@@ -2392,7 +2435,7 @@ impl FnCx<'_> {
                 let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
                     return error_expr(span);
                 };
-                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+                return mk(tir::ExprKind::Call(f, checked, Vec::new()), sig.ret, span);
             }
             if name.name != "parse" && name.name != "default" {
                 let message = format!("`{}` has no function `{}`", i.name(), name.name);
@@ -2412,7 +2455,7 @@ impl FnCx<'_> {
                     let sig = self.globals.sigs[f.0].clone();
                     let mut call_args = checked;
                     call_args.push(mk(tir::ExprKind::Int(10), Ty::Int(IntTy::U32), span));
-                    return mk(tir::ExprKind::Call(f, call_args), sig.ret, span);
+                    return mk(tir::ExprKind::Call(f, call_args, Vec::new()), sig.ret, span);
                 }
                 let error = self.globals.parse_int_error_ty.clone().unwrap_or(Ty::Unit);
                 let ret = self.globals.result_ty(ty.clone(), error);
@@ -2437,7 +2480,7 @@ impl FnCx<'_> {
                 let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
                     return error_expr(span);
                 };
-                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+                return mk(tir::ExprKind::Call(f, checked, Vec::new()), sig.ret, span);
             }
         }
         // The associated functions of `String` (the only built-in owning type with any so far).
@@ -2456,7 +2499,7 @@ impl FnCx<'_> {
                 let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
                     return error_expr(span);
                 };
-                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+                return mk(tir::ExprKind::Call(f, checked, Vec::new()), sig.ret, span);
             }
             if name.name == "with_capacity" {
                 let sig = builtin_sig(Builtin::StringWithCapacity, self.globals);
@@ -2495,7 +2538,7 @@ impl FnCx<'_> {
                 let Some(checked) = self.args(&name.name, &sig.params, args, None, span) else {
                     return error_expr(span);
                 };
-                return mk(tir::ExprKind::Call(f, checked), sig.ret, span);
+                return mk(tir::ExprKind::Call(f, checked, Vec::new()), sig.ret, span);
             }
             return self.no_assoc_function(ty, name, format!("`str` has no function `{}`", name.name), args, span);
         }
@@ -2551,8 +2594,29 @@ impl FnCx<'_> {
         }
         let sig = &self.globals.sigs[f.0];
         let (params, ret) = (sig.params.clone(), sig.ret.clone());
-        let Some(checked) = self.args(&name.name, &params, args, None, span) else { return error_expr(span) };
-        mk(tir::ExprKind::Call(f, checked), ret, span)
+        let Some(checked) = self.args_ordered(&name.name, &params, args, None, span) else { return error_expr(span) };
+        mk(tir::ExprKind::Call(f, checked.args, checked.order), ret, span)
+    }
+}
+
+/// Checked call arguments in parameter order, plus the source evaluation order when named arguments were written
+/// out of parameter order (`spec/arguments.md`, AG6).
+pub(super) struct CheckedArgs {
+    pub(super) args: Vec<tir::Expr>,
+    pub(super) order: Vec<usize>,
+}
+
+impl CheckedArgs {
+    /// Prepends a method receiver, shifting any non-empty evaluation order so the receiver runs first.
+    pub(super) fn with_receiver(mut self, recv: tir::Expr) -> Self {
+        self.args.insert(0, recv);
+        if !self.order.is_empty() {
+            for idx in &mut self.order {
+                *idx += 1;
+            }
+            self.order.insert(0, 0);
+        }
+        self
     }
 }
 

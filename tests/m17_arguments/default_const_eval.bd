@@ -1,0 +1,61 @@
+//@ run
+//> 10
+//> 15
+//> 3,4
+//> 7,8
+//> hello world
+//> 55
+
+// A default argument has the same compile-time expression power as `const`: pure function calls, struct
+// literals, blocks, loops, and `String` values are evaluated once at the declaration and materialized at every
+// call that omits the argument (spec/arguments.md, AG2; spec/const-eval.md, CE2-CE3).
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn make_ten(): i32 {
+    let mut s = 0
+    for i in 1..=4 {
+        s = s + i
+    }
+    s
+}
+
+fn default_point(): Point {
+    Point { x: 3, y: 4 }
+}
+
+fn add_default(a: i32, b: i32 = make_ten()): i32 { a + b }
+
+fn show_point(p: Point = Point { x: 3, y: 4 }) {
+    println("{},{}", p.x, p.y)
+}
+
+fn show_point_fn(p: Point = default_point()) {
+    println("{},{}", p.x, p.y)
+}
+
+fn greet(msg: String = String.from("hello world")) {
+    println("{msg}")
+}
+
+fn sum_to(n: i32 = {
+    let mut acc = 0
+    for i in 1..=10 {
+        acc = acc + i
+    }
+    acc
+}): i32 {
+    n
+}
+
+fn main() {
+    println("{}", add_default(0))
+    println("{}", add_default(5))
+    show_point()
+    show_point_fn(Point { x: 7, y: 8 })
+    greet()
+    println("{}", sum_to())
+}

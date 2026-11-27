@@ -220,7 +220,7 @@ impl Walker<'_> {
         use tir::ExprKind as K;
         self.note_ty(&e.ty);
         match &e.kind {
-            K::Call(f, args) => {
+            K::Call(f, args, _) => {
                 self.out.push(*f);
                 self.all(args);
             }

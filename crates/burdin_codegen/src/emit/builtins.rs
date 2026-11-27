@@ -269,6 +269,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let p = self.global_realloc(p, new_size, Some(span))?;
                 return Ok(Some(p.into()));
             }
+            // The checking allocator's count of blocks (AL9); a build without it has nothing to count.
+            Builtin::AllocCount => {
+                let n = match self.rt.alloc_count {
+                    Some(f) => self
+                        .builder
+                        .build_call(f, &[], "alloc.count")
+                        .map_err(llvm_err)?
+                        .try_as_basic_value()
+                        .basic()
+                        .expect("the count returns a value"),
+                    None => self.cx.i64_type().const_zero().into(),
+                };
+                return Ok(Some(n));
+            }
             // The fallible `Global` primitives: a null pointer instead of the out-of-memory panic (AL11).
             Builtin::RawTryAlloc => {
                 let size = self.expr_mode(&args[0], Mode::Use)?;

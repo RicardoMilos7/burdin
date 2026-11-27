@@ -4,6 +4,17 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**`Path` without a `List<char>` per method (2026-11-27, issue #1020).** Every `Path` operation scans the text's bytes
+by offset (`next_span`, `last_span`, `prefix_len`, and `is_rooted` in `std/src/path.bd`); separators, the drive colon,
+and dots are ASCII, so offsets next to them are character boundaries. The decision on views: the public methods keep
+their owned results (`Option<String>`, `List<String>`, `Path`), because the spec and the conformance tests declare them
+that way and an owned result outlives its `Path`; the private helpers find each piece as a `str` view and the method
+copies only the result, so each allocates one block (`components`: the list plus one per name). Returning views is
+possible (`str.strip_prefix` returns `Option<str>`) and would be a spec change for whoever wants it. `fs.walk` makes
+its root `Path` once. To measure this, the checking allocator of `burdin test` counts blocks and `__alloc_count()` reads
+the count (0 in other builds and in the interpreter; AL9), and `benches/std` is a `burdin bench` package for `std`
+with one module per `std` module (only `path.bd` so far). The other #1038 issues can pin their counts and baselines
+the same way.
 **Lazy text iterators and `std/src/text.bd` optimizations (2026-11-27, issue #1019).** `split`, `rsplit`, `split_char`,
 `rsplit_char`, `split_whitespace`, `lines`, `match_indices`, `find_all`, and `char_indices` in `std/src/text.bd` now
 return lazy iterators (`Split<str>`, `RSplit<str>`, `SplitChar<str>`, `RSplitChar<str>`, `SplitWhitespace<str>`,

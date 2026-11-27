@@ -590,7 +590,7 @@ impl<'a> Analyzer<'a> {
                 }
                 Origin::temp()
             }
-            K::Call(f, args) => {
+            K::Call(f, args, _) => {
                 let mut storages = Vec::with_capacity(args.len());
                 for arg in args {
                     storages.push(self.argument_storage(arg));

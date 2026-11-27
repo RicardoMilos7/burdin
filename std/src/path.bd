@@ -9,7 +9,17 @@
 use fmt.{Debug, Display, Formatter}
 use target.{Os, os}
 use std.CString
-use text.to_char_list
+
+// Every operation below reads the path's bytes by offset. The separators, the drive colon, and the dots it looks for
+// are ASCII, and no byte of a multi-byte UTF-8 character is ASCII, so a byte offset found next to one of them is always
+// a character boundary and the text never needs to be decoded (issue #1020). The methods that return a piece of the
+// path (`components`, `file_name`, `file_stem`, `extension`, `drive`, `parent`) still return owned values, as
+// `spec/stdlib.md` declares them, but each one allocates only its result: the pieces are found as views first.
+
+priv const SLASH: u8 = 47
+priv const BACKSLASH: u8 = 92
+priv const COLON: u8 = 58
+priv const DOT: u8 = 46
 
 /// A file system path and the rules it follows.
 ///
@@ -30,15 +40,16 @@ extern "C" {
     priv fn _access(path: CPtr<CChar>, mode: i32): i32
 }
 
-priv fn is_sep(c: char, windows: bool): bool {
-    c == '/' || (windows && c == '\\')
+priv fn is_sep(b: u8, windows: bool): bool {
+    b == SLASH || (windows && b == BACKSLASH)
 }
 
 /// The length of a Windows drive prefix (`C:`), or zero.
-priv fn prefix_len(chars: List<char>, windows: bool): usize {
-    if windows && chars.len() >= 2 && chars[1] == ':' {
-        let c = chars[0]
-        if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+priv fn prefix_len(text: str, windows: bool): usize {
+    let bytes = text.as_bytes()
+    if windows && bytes.len() >= 2 && bytes[1] == COLON {
+        let c = bytes[0]
+        if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) {
             return 2
         }
     }
@@ -46,76 +57,106 @@ priv fn prefix_len(chars: List<char>, windows: bool): usize {
 }
 
 /// Whether a separator follows the prefix.
-priv fn is_rooted(chars: List<char>, prefix: usize, windows: bool): bool {
-    chars.len() > prefix && is_sep(chars[prefix], windows)
+priv fn is_rooted(text: str, prefix: usize, windows: bool): bool {
+    text.len() > prefix && is_sep(text.as_bytes()[prefix], windows)
 }
 
 /// Whether the text starts with two separators on Windows (a share such as `\\server\share`).
-priv fn is_unc(chars: List<char>, windows: bool): bool {
-    windows && chars.len() >= 2 && is_sep(chars[0], true) && is_sep(chars[1], true)
+priv fn is_unc(text: str, windows: bool): bool {
+    let bytes = text.as_bytes()
+    windows && bytes.len() >= 2 && is_sep(bytes[0], true) && is_sep(bytes[1], true)
 }
 
-/// Whether the last of the names is a real name, not `..`: the one a following `..` cancels.
-priv fn ends_in_name(names: List<String>): bool {
-    names.len() > 0 && names[names.len() - 1].as_str() != ".."
-}
-
-priv fn slice(chars: List<char>, from: usize, to: usize): String {
-    let mut out = String.new()
-    let mut i = from
-    while i < to {
-        out.push(chars[i])
-        i = i + 1
+/// Whether `text` names a place without a working directory (`Path.is_absolute`).
+priv fn is_absolute_text(text: str, windows: bool): bool {
+    if !windows {
+        return is_rooted(text, 0, false)
     }
-    out
+    let prefix = prefix_len(text, true)
+    if prefix > 0 {
+        return is_rooted(text, prefix, true)
+    }
+    is_unc(text, true)
 }
 
-/// The character ranges of the components after `start`: empty pieces and `.` are skipped.
-priv fn spans(chars: List<char>, start: usize, windows: bool): List<(usize, usize)> {
-    let mut out = List<(usize, usize)>.new()
-    let n = chars.len()
+/// Whether the bytes `from..to` are a component: not empty and not `.`.
+priv fn is_component(bytes: [u8], from: usize, to: usize): bool {
+    to > from && !(to - from == 1 && bytes[from] == DOT)
+}
+
+/// Whether the bytes `from..to` are `..`.
+priv fn is_parent_dir(bytes: [u8], from: usize, to: usize): bool {
+    to - from == 2 && bytes[from] == DOT && bytes[from + 1] == DOT
+}
+
+/// The byte range of the first component at or after `start`: empty pieces and `.` are skipped.
+priv fn next_span(text: str, start: usize, windows: bool): Option<(usize, usize)> {
+    let bytes = text.as_bytes()
+    let n = bytes.len()
     let mut i = start
     while i < n {
-        while i < n && is_sep(chars[i], windows) {
+        while i < n && is_sep(bytes[i], windows) {
             i = i + 1
         }
         let from = i
-        while i < n && !is_sep(chars[i], windows) {
+        while i < n && !is_sep(bytes[i], windows) {
             i = i + 1
         }
-        if i > from && !(i - from == 1 && chars[from] == '.') {
-            out.push((from, i))
+        if is_component(bytes, from, i) {
+            return Option.Some((from, i))
         }
     }
-    out
+    Option.None
+}
+
+/// The byte range of the last component that lies inside `start..end`, read from the end: the same pieces
+/// `next_span` finds from the front.
+priv fn last_span(text: str, start: usize, end: usize, windows: bool): Option<(usize, usize)> {
+    let bytes = text.as_bytes()
+    let mut i = end
+    while i > start {
+        while i > start && is_sep(bytes[i - 1], windows) {
+            i = i - 1
+        }
+        let to = i
+        while i > start && !is_sep(bytes[i - 1], windows) {
+            i = i - 1
+        }
+        if is_component(bytes, i, to) {
+            return Option.Some((i, to))
+        }
+    }
+    Option.None
+}
+
+/// The last name of the path, unless it is `..` or there is none: a view of `text`.
+priv fn file_name_of(text: str, windows: bool): Option<str> {
+    let prefix = prefix_len(text, windows)
+    match last_span(text, prefix, text.len(), windows) {
+        Option.Some((from, to)) if !is_parent_dir(text.as_bytes(), from, to) => Option.Some(text[from..to]),
+        _ => Option.None,
+    }
 }
 
 /// The position of the dot that starts the extension of a file name, if it has one. A name that starts with a dot
 /// (`.profile`) has no extension.
-priv fn dot(chars: List<char>): Option<usize> {
-    let mut i = chars.len()
+priv fn dot(name: str): Option<usize> {
+    let bytes = name.as_bytes()
+    let mut i = bytes.len()
     while i > 1 {
         i = i - 1
-        if chars[i] == '.' {
+        if bytes[i] == DOT {
             return Option.Some(i)
         }
     }
     Option.None
 }
 
-priv fn stem(name: str): String {
-    let chars = name.to_char_list()
-    match dot(chars) {
-        Option.Some(d) => slice(chars, 0, d),
-        Option.None => String.from(name),
-    }
-}
-
-priv fn extension(name: str): Option<String> {
-    let chars = name.to_char_list()
-    match dot(chars) {
-        Option.Some(d) => Option.Some(slice(chars, d + 1, chars.len())),
-        Option.None => Option.None,
+/// The file name without its extension: a view of `name`.
+priv fn stem(name: str): str {
+    match dot(name) {
+        Option.Some(d) => name[0..d],
+        Option.None => name,
     }
 }
 
@@ -181,15 +222,7 @@ Path {
     /// assert(!Path.windows("\\temp").is_absolute())
     /// ```
     fn is_absolute(self): bool {
-        let chars = self.text.to_char_list()
-        if !self.is_windows {
-            return is_rooted(chars, 0, false)
-        }
-        let prefix = prefix_len(chars, true)
-        if prefix > 0 {
-            return is_rooted(chars, prefix, true)
-        }
-        is_unc(chars, true)
+        is_absolute_text(self.text.as_str(), self.is_windows)
     }
 
     /// The opposite of `is_absolute`.
@@ -209,12 +242,12 @@ Path {
     /// assert_eq(Path.unix("/a").drive(), Option.None)
     /// ```
     fn drive(self): Option<String> {
-        let chars = self.text.to_char_list()
-        let prefix = prefix_len(chars, self.is_windows)
+        let text = self.text.as_str()
+        let prefix = prefix_len(text, self.is_windows)
         if prefix == 0 {
             return Option.None
         }
-        Option.Some(slice(chars, 0, prefix))
+        Option.Some(String.from(text[0..prefix]))
     }
 
     /// The names in the path, in order, without separators, empty pieces, or `.`. `..` is kept.
@@ -225,14 +258,21 @@ Path {
     /// assert_eq(parts[2], String.from("x"))
     /// ```
     fn components(self): List<String> {
-        let chars = self.text.to_char_list()
-        let prefix = prefix_len(chars, self.is_windows)
-        let spans = spans(chars, prefix, self.is_windows)
-        let mut out = List<String>.new()
-        let mut i: usize = 0
-        while i < spans.len() {
-            out.push(slice(chars, spans[i].0, spans[i].1))
-            i = i + 1
+        let w = self.is_windows
+        let text = self.text.as_str()
+        let prefix = prefix_len(text, w)
+        // Count first so the list is allocated once, at its final size.
+        let mut count: usize = 0
+        let mut at = prefix
+        while let Option.Some((_, to)) = next_span(text, at, w) {
+            count = count + 1
+            at = to
+        }
+        let mut out = List<String>.with_capacity(count)
+        at = prefix
+        while let Option.Some((from, to)) = next_span(text, at, w) {
+            out.push(String.from(text[from..to]))
+            at = to
         }
         out
     }
@@ -249,28 +289,23 @@ Path {
     /// ```
     fn join(self, other: str): Path {
         let w = self.is_windows
-        let given = Path { text: String.from(other), is_windows: w }
-        if given.is_absolute() {
-            return given
+        // An absolute `other`, or on Windows one with a drive, replaces the path.
+        if prefix_len(other, w) > 0 || is_absolute_text(other, w) {
+            return Path { text: String.from(other), is_windows: w }
         }
-        let given_chars = other.to_char_list()
-        if prefix_len(given_chars, w) > 0 {
-            return given
-        }
-        let chars = self.text.to_char_list()
-        let prefix = prefix_len(chars, w)
-        if w && is_rooted(given_chars, 0, true) {
-            let mut out = slice(chars, 0, prefix)
+        let text = self.text.as_str()
+        let prefix = prefix_len(text, w)
+        if w && is_rooted(other, 0, true) {
+            let mut out = String.with_capacity(prefix + other.len())
+            out.push_str(text[0..prefix])
             out.push_str(other)
             return Path { text: out, is_windows: w }
         }
-        let mut out = String.from(self.text.as_str())
-        if other.len() == 0 || chars.len() == 0 {
-            out.push_str(other)
-            return Path { text: out, is_windows: w }
-        }
-        let last = chars[chars.len() - 1]
-        if !is_sep(last, w) && chars.len() != prefix {
+        let n = text.len()
+        let needs_sep = other.len() > 0 && n > 0 && n != prefix && !is_sep(text.as_bytes()[n - 1], w)
+        let mut out = String.with_capacity(n + other.len() + if needs_sep { 1 } else { 0 })
+        out.push_str(text)
+        if needs_sep {
             out.push(self.separator())
         }
         out.push_str(other)
@@ -285,19 +320,19 @@ Path {
     /// assert_eq(p.as_str(), "a/b")
     /// ```
     fn parent(self): Option<Path> {
-        let chars = self.text.to_char_list()
-        let prefix = prefix_len(chars, self.is_windows)
-        let spans = spans(chars, prefix, self.is_windows)
-        if spans.len() == 0 {
-            return Option.None
+        let w = self.is_windows
+        let text = self.text.as_str()
+        let prefix = prefix_len(text, w)
+        let last = match last_span(text, prefix, text.len(), w) {
+            Option.Some((from, _)) => from,
+            Option.None => return Option.None,
         }
-        let mut end = prefix
-        if spans.len() > 1 {
-            end = spans[spans.len() - 2].1
-        } else if is_rooted(chars, prefix, self.is_windows) {
-            end = prefix + 1
+        let end = match last_span(text, prefix, last, w) {
+            Option.Some((_, to)) => to,
+            Option.None if is_rooted(text, prefix, w) => prefix + 1,
+            Option.None => prefix,
         }
-        Option.Some(Path { text: slice(chars, 0, end), is_windows: self.is_windows })
+        Option.Some(Path { text: String.from(text[0..end]), is_windows: w })
     }
 
     /// The last name, unless the path ends in `..` or has no names.
@@ -307,17 +342,10 @@ Path {
     /// assert_eq(Path.unix("a/..").file_name(), Option.None)
     /// ```
     fn file_name(self): Option<String> {
-        let chars = self.text.to_char_list()
-        let prefix = prefix_len(chars, self.is_windows)
-        let spans = spans(chars, prefix, self.is_windows)
-        if spans.len() == 0 {
-            return Option.None
+        match file_name_of(self.text.as_str(), self.is_windows) {
+            Option.Some(name) => Option.Some(String.from(name)),
+            Option.None => Option.None,
         }
-        let name = slice(chars, spans[spans.len() - 1].0, spans[spans.len() - 1].1)
-        if name.as_str() == ".." {
-            return Option.None
-        }
-        Option.Some(name)
     }
 
     /// The last name without its extension: `archive.tar.gz` is `archive.tar`, `.profile` is `.profile`.
@@ -326,8 +354,8 @@ Path {
     /// assert_eq(Path.unix("archive.tar.gz").file_stem(), Option.Some(String.from("archive.tar")))
     /// ```
     fn file_stem(self): Option<String> {
-        match self.file_name() {
-            Option.Some(name) => Option.Some(stem(name.as_str())),
+        match file_name_of(self.text.as_str(), self.is_windows) {
+            Option.Some(name) => Option.Some(String.from(stem(name))),
             Option.None => Option.None,
         }
     }
@@ -340,8 +368,12 @@ Path {
     /// assert_eq(Path.unix("Makefile").extension(), Option.None)
     /// ```
     fn extension(self): Option<String> {
-        match self.file_name() {
-            Option.Some(name) => extension(name.as_str()),
+        let name = match file_name_of(self.text.as_str(), self.is_windows) {
+            Option.Some(name) => name,
+            Option.None => return Option.None,
+        }
+        match dot(name) {
+            Option.Some(d) => Option.Some(String.from(name[d + 1..name.len()])),
             Option.None => Option.None,
         }
     }
@@ -353,15 +385,16 @@ Path {
     /// assert_eq(p.as_str(), "src/new.bd")
     /// ```
     fn with_file_name(self, name: str): Path {
-        let chars = self.text.to_char_list()
-        let prefix = prefix_len(chars, self.is_windows)
-        let spans = spans(chars, prefix, self.is_windows)
-        if spans.len() == 0 {
-            return self.join(name)
+        let w = self.is_windows
+        let text = self.text.as_str()
+        let from = match last_span(text, prefix_len(text, w), text.len(), w) {
+            Option.Some((from, _)) => from,
+            Option.None => return self.join(name),
         }
-        let mut out = slice(chars, 0, spans[spans.len() - 1].0)
+        let mut out = String.with_capacity(from + name.len())
+        out.push_str(text[0..from])
         out.push_str(name)
-        Path { text: out, is_windows: self.is_windows }
+        Path { text: out, is_windows: w }
     }
 
     /// The path with the extension of its last name replaced by `extension` (no leading dot), or removed when
@@ -372,17 +405,22 @@ Path {
     /// assert_eq(p.as_str(), "notes.md")
     /// ```
     fn with_extension(self, extension: str): Path {
-        match self.file_name() {
-            Option.None => self.clone(),
-            Option.Some(name) => {
-                let mut renamed = stem(name.as_str())
-                if extension.len() > 0 {
-                    renamed.push('.')
-                    renamed.push_str(extension)
-                }
-                self.with_file_name(renamed.as_str())
-            }
+        let w = self.is_windows
+        let text = self.text.as_str()
+        // The last name, as `file_name` finds it; with none the path is unchanged.
+        let (from, to) = match last_span(text, prefix_len(text, w), text.len(), w) {
+            Option.Some((from, to)) if !is_parent_dir(text.as_bytes(), from, to) => (from, to),
+            _ => return self.clone(),
         }
+        let kept = from + stem(text[from..to]).len()
+        let added = if extension.len() > 0 { extension.len() + 1 } else { 0 }
+        let mut out = String.with_capacity(kept + added)
+        out.push_str(text[0..kept])
+        if extension.len() > 0 {
+            out.push('.')
+            out.push_str(extension)
+        }
+        Path { text: out, is_windows: w }
     }
 
     /// The path with `.` and empty pieces removed and each `name/..` pair cancelled, written with the rules'
@@ -395,27 +433,36 @@ Path {
     /// ```
     fn normalize(self): Path {
         let w = self.is_windows
-        let chars = self.text.to_char_list()
-        let prefix = prefix_len(chars, w)
-        let rooted = is_rooted(chars, prefix, w)
-        let unc = is_unc(chars, w)
-        let spans = spans(chars, prefix, w)
-        let mut stack = List<String>.new()
-        let mut i: usize = 0
-        while i < spans.len() {
-            let from = spans[i].0
-            let to = spans[i].1
-            let is_parent = to - from == 2 && chars[from] == '.' && chars[from + 1] == '.'
-            let can_pop = ends_in_name(stack)
+        let text = self.text.as_str()
+        let bytes = text.as_bytes()
+        let prefix = prefix_len(text, w)
+        let rooted = is_rooted(text, prefix, w)
+        let unc = is_unc(text, w)
+        // The kept names, as byte ranges of the text: nothing is copied until the result is written. The names are
+        // counted first so the list is allocated once.
+        let mut count: usize = 0
+        let mut at = prefix
+        while let Option.Some((_, to)) = next_span(text, at, w) {
+            count = count + 1
+            at = to
+        }
+        let mut stack = List<(usize, usize)>.with_capacity(count)
+        at = prefix
+        while let Option.Some((from, to)) = next_span(text, at, w) {
+            let is_parent = is_parent_dir(bytes, from, to)
+            let top = stack.len()
+            let can_pop = top > 0 && !is_parent_dir(bytes, stack[top - 1].0, stack[top - 1].1)
             if is_parent && can_pop {
                 let dropped = stack.pop()
             } else if !is_parent || !rooted {
-                stack.push(slice(chars, from, to))
+                stack.push((from, to))
             }
-            i = i + 1
+            at = to
         }
         let sep = self.separator()
-        let mut out = slice(chars, 0, prefix)
+        // The result is never longer than the text plus the `.` of an empty result.
+        let mut out = String.with_capacity(text.len() + 1)
+        out.push_str(text[0..prefix])
         if unc {
             out.push(sep)
         }
@@ -427,7 +474,7 @@ Path {
             if j > 0 {
                 out.push(sep)
             }
-            out.push_str(stack[j].as_str())
+            out.push_str(text[stack[j].0..stack[j].1])
             j = j + 1
         }
         if out.len() == 0 {

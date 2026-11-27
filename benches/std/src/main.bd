@@ -1,0 +1,6 @@
+// Benchmarks of the standard library (issue #1038): one module per `std` module, each measured with
+// `burdin bench benches/std` and compared against a saved baseline (`spec/bench.md`, BN11).
+
+fn main() {
+    println("the package's main never runs in bench mode")
+}

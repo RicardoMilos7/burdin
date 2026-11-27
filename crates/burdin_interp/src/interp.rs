@@ -525,7 +525,7 @@ impl<'p, 'c> Interp<'p, 'c> {
             K::Static(id) => {
                 return Err(impure(&format!("reading the static `{}`", self.p.consts[id.0].name), span));
             }
-            K::Call(f, args) => self.call(*f, None, args, span)?,
+            K::Call(f, args, order) => self.call(*f, None, args, order, span)?,
             K::ExternCall(n, _) => {
                 let name = self.p.externs.get(*n).map(|x| x.symbol.clone()).unwrap_or_default();
                 return Err(impure(&format!("calling the C function `{name}`"), span));
@@ -553,7 +553,7 @@ impl<'p, 'c> Interp<'p, 'c> {
             }
             K::ClosureCall { callee, args, kind } => self.closure_call(callee, args, *kind, span)?,
             K::BoxAny { value, vtable } => Value::Any(*vtable, Box::new(self.eval(value, Mode::Move)?)),
-            K::AnyCall { recv, slot, args, .. } => {
+            K::AnyCall { recv, slot, args, eval_order, .. } => {
                 let p = self.eval_place(recv)?;
                 let vt = match self.place_mut(&p, span)?.clone().deref() {
                     Value::Any(vt, _) => vt,
@@ -562,7 +562,7 @@ impl<'p, 'c> Interp<'p, 'c> {
                 let func = self.p.any_vtables[vt].entries[*slot];
                 let mut recv_place = p;
                 recv_place.path.push(Step::Deref);
-                self.call(func, Some(recv_place), args, span)?
+                self.call(func, Some(recv_place), args, eval_order, span)?
             }
             K::AnyUpcast { value, slot, .. } => match self.eval(value, Mode::Move)? {
                 Value::Any(vt, inner) => Value::Any(self.p.any_vtables[vt].supers[*slot], inner),
@@ -1079,7 +1079,14 @@ impl<'p, 'c> Interp<'p, 'c> {
 
     /// Calls function `f`. `recv` is the place of a receiver passed by address (a dynamic call's box); the
     /// arguments follow the callee's conventions.
-    pub(crate) fn call(&mut self, f: FuncId, recv: Option<Place>, args: &'p [Expr], span: Span) -> R<Value> {
+    pub(crate) fn call(
+        &mut self,
+        f: FuncId,
+        recv: Option<Place>,
+        args: &'p [Expr],
+        order: &[usize],
+        span: Span,
+    ) -> R<Value> {
         let func = &self.p.functions[f.0];
         if func.symbolic {
             return Err(Fault::Internal(format!("`{}` has no body", func.name), span).into());
@@ -1095,13 +1102,17 @@ impl<'p, 'c> Interp<'p, 'c> {
         }
         let func = &self.p.functions[f.0];
         let mut slots: Vec<Slot> = func.locals.iter().map(|_| Slot::Val(Value::Moved)).collect();
-        let mut params = func.params.iter();
-        if let Some(recv) = recv {
-            let first = params.next().expect("a method has a receiver");
+        let param_offset = if let Some(recv) = recv {
+            let first = func.params.first().expect("a method has a receiver");
             slots[first.0] = Slot::Alias(recv);
-        }
+            1
+        } else {
+            0
+        };
         let mut borrowed_temps: Vec<usize> = Vec::new();
-        for (param, arg) in params.zip(args) {
+        for i in burdin_tir::eval_order(args.len(), order) {
+            let Some(param) = func.params.get(param_offset + i) else { continue };
+            let arg = &args[i];
             let local = &func.locals[param.0];
             slots[param.0] = if local.by_ref && Self::is_place(arg) {
                 Slot::Alias(self.eval_place(arg)?)

@@ -756,12 +756,13 @@ impl<'a> Checker<'a> {
                 self.expr(lo, Mode::Use);
                 self.expr(hi, Mode::Use);
             }
-            K::Call(f, args) => {
+            K::Call(f, args, order) => {
                 let params = self.env.sigs[f.0].params.clone();
                 // A call the compiler generated (an interpolated string's formatter) is not source code the
                 // annotation shows; its arguments are still walked for their effects.
                 let generated = self.env.internal.get(f.0).copied().unwrap_or(false);
-                for (i, a) in args.iter().enumerate() {
+                for i in burdin_tir::eval_order(args.len(), order) {
+                    let a = &args[i];
                     let Some(p) = params.get(i) else {
                         self.with_dest(None, Mode::Use, a);
                         continue;
@@ -896,7 +897,7 @@ impl<'a> Checker<'a> {
             K::AnyUpcast { value, .. } => self.expr(value, Mode::Move),
             // A dynamic call borrows the box (it can never take `own self`); its arguments follow the interface
             // method's conventions.
-            K::AnyCall { recv, params, args, .. } => {
+            K::AnyCall { recv, params, args, eval_order, .. } => {
                 let place = self.place_of(recv);
                 let (root, path) = match &place {
                     Some((root, path)) => (Some(*root), path.as_slice()),
@@ -912,7 +913,12 @@ impl<'a> Checker<'a> {
                     },
                 );
                 self.with_dest(None, Mode::Use, recv);
-                for (i, (a, p)) in args.iter().zip(params).enumerate() {
+                for i in burdin_tir::eval_order(args.len(), eval_order) {
+                    let a = &args[i];
+                    let Some(p) = params.get(i) else {
+                        self.with_dest(None, Mode::Use, a);
+                        continue;
+                    };
                     let convention = if p.own {
                         tir::CallConvention::Own
                     } else if p.exclusive {

@@ -137,6 +137,15 @@ pub(crate) struct DeriveSrc<'t> {
     pub(crate) decl: &'t ast::DeriveDecl,
 }
 
+/// One default-argument expression lowered to a compile-time constant (`spec/arguments.md`, AG2).
+pub(crate) struct DefaultConst<'t> {
+    pub(crate) func_id: usize,
+    /// Index into `globals.sigs[func_id].params`.
+    pub(crate) param_idx: usize,
+    pub(crate) param_name: String,
+    pub(crate) default: &'t ast::Expr,
+}
+
 /// Everything the checker knows while it works on the program.
 pub(crate) struct Sema<'t> {
     pub(crate) globals: Globals,
@@ -148,6 +157,10 @@ pub(crate) struct Sema<'t> {
     pub(crate) src: AdtSrc<'t>,
     pub(crate) fn_items: Vec<FnItem<'t>>,
     pub(crate) const_decls: Vec<NamedSrc<'t, ast::ConstDecl>>,
+    /// Maps `(func_id, param_idx)` to the synthetic `ConstId` of its default argument (`spec/arguments.md`, AG2).
+    pub(crate) default_const_ids: std::collections::HashMap<(usize, usize), tir::ConstId>,
+    /// The synthetic constants for default arguments, in allocation order (starting after `const_decls.len()`).
+    pub(crate) default_consts: Vec<DefaultConst<'t>>,
     pub(crate) alias_decls: Vec<NamedSrc<'t, ast::TypeAliasDecl>>,
     /// The `extern` declarations whose signatures are resolved once types and imports are known.
     pub(crate) extern_srcs: Vec<crate::declare::ExternSrc<'t>>,
@@ -247,6 +260,8 @@ impl<'t> Sema<'t> {
             src: AdtSrc::default(),
             fn_items: Vec::new(),
             const_decls: Vec::new(),
+            default_const_ids: std::collections::HashMap::new(),
+            default_consts: Vec::new(),
             alias_decls: Vec::new(),
             extern_srcs: Vec::new(),
             extension_srcs: Vec::new(),

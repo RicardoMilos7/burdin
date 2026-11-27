@@ -320,7 +320,7 @@ impl Visit for Occurrences<'_> {
                 };
                 (local.name.clone(), kind, self.analysis.real(local.span))
             }),
-            ExprKind::Call(id, _) => self.program.functions.get(id.0).map(|f| {
+            ExprKind::Call(id, _, _) => self.program.functions.get(id.0).map(|f| {
                 let name = crate::api::source_text(f.name.split('<').next().unwrap_or(&f.name));
                 (name, DefinitionKind::Function, self.analysis.real(f.span))
             }),
@@ -350,7 +350,7 @@ struct Calls<'a> {
 
 impl Visit for Calls<'_> {
     fn expr(&mut self, e: &Expr) {
-        if let ExprKind::Call(id, args) = &e.kind
+        if let ExprKind::Call(id, args, _) = &e.kind
             && e.span.lo < e.span.hi
             && let (Some(f), Some(sig)) = (self.program.functions.get(id.0), self.program.signatures.get(id.0))
         {

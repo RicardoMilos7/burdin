@@ -230,6 +230,13 @@ reported as a later test's leak. The leak report is `leak_detection.bd` in `test
 `tests/runner/leaks/` fixture; `tests/check_test_runner.py` checks the exact report. A use-after-free is still
 not detected, and an allocator that bypasses the compiler's primitives is outside the check.
 
+The checking allocator also counts. `__alloc_count(): u64` is the number of blocks it has handed out since the
+program started: every tracked allocation, and the fresh block of every reallocation. Freeing a block does not
+lower it, and it counts across threads. A test pins how many allocations an operation makes by reading the count
+before and after it (`alloc_count.bd` in `tests/m23_allocators/`; `m24_stdlib/path_allocations`). In a build without the
+checking allocator (`burdin build`, `burdin run`, `burdin bench`) and in the interpreter there is nothing to count,
+and it is always 0 (`alloc_count_outside_test.bd`).
+
 ## AL10. Allocation at compile time
 
 The compile-time interpreter (`spec/const-eval.md`) models the containers on its own heap: a `List`, `Map`, or

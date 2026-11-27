@@ -48,7 +48,7 @@ pub fn interpret_test(program: &Program, func: FuncId, opts: Options) -> Interpr
     );
     it.raw_memory = true;
     let span = program.functions[func.0].span;
-    match it.call(func, None, &[], span) {
+    match it.call(func, None, &[], &[], span) {
         // The wrapper returns `Result<(), AssertError>`; `Err` is a failed assertion.
         Ok(Value::Variant(1, _)) => return Interpreted::Failed("the test returned an error".to_string(), span),
         Ok(_) => {}

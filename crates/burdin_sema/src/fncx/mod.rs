@@ -26,7 +26,7 @@ mod stmt;
 pub(crate) mod suggest;
 mod target;
 
-pub(crate) use item::{check_const, check_defaults, check_function, infer_return};
+pub(crate) use item::{check_const, check_default_const, check_default_signatures, check_function, infer_return};
 pub(crate) use reflect::RESERVED_MEMBERS;
 
 use crate::builtins::builtin_type;
@@ -879,7 +879,7 @@ impl<'a> FnCx<'a> {
         } else {
             vec![boxed]
         };
-        mk(tir::ExprKind::Call(helper, args), error_ty, span)
+        mk(tir::ExprKind::Call(helper, args, Vec::new()), error_ty, span)
     }
 
     /// Like `expect_ty`, but a `String` argument is borrowed where a `str` is expected.

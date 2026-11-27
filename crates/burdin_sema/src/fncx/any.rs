@@ -55,10 +55,22 @@ impl FnCx<'_> {
             );
         }
         let params = sig.params[1..].to_vec();
-        let Some(checked) = self.args(&name.name, &params, args, Some((&recv, receiver.exclusive)), span) else {
+        let Some(checked) = self.args_ordered(&name.name, &params, args, Some((&recv, receiver.exclusive)), span)
+        else {
             return error_expr(span);
         };
-        mk(tir::ExprKind::AnyCall { recv: Box::new(recv), iface: any.id, slot, params, args: checked }, sig.ret, span)
+        mk(
+            tir::ExprKind::AnyCall {
+                recv: Box::new(recv),
+                iface: any.id,
+                slot,
+                params,
+                args: checked.args,
+                eval_order: checked.order,
+            },
+            sig.ret,
+            span,
+        )
     }
 
     /// The type `T` of `is<T>`, `downcast<T>`, or a type pattern on an `any` value: it must be first-class and implement

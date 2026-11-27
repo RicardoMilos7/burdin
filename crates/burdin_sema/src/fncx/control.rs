@@ -616,14 +616,14 @@ impl FnCx<'_> {
                 mk(tir::ExprKind::Int(i128::from(line)), Ty::Int(IntTy::I32), span),
                 mk(tir::ExprKind::Int(i128::from(col)), Ty::Int(IntTy::I32), span),
             ];
-            return mk(tir::ExprKind::Call(frame, args), to.clone(), span);
+            return mk(tir::ExprKind::Call(frame, args, Vec::new()), to.clone(), span);
         }
         // The enclosing function's return type did not resolve; its own diagnostic is enough.
         if matches!(from, Ty::Error) || matches!(to, Ty::Error) {
             return value;
         }
         if let Some(f) = self.globals.conversion(from, to) {
-            return mk(tir::ExprKind::Call(f, vec![value]), to.clone(), span);
+            return mk(tir::ExprKind::Call(f, vec![value], Vec::new()), to.clone(), span);
         }
         if self.globals.is_error_ty(to) && self.globals.implements_error(from, &self.bounds) {
             return self.coerce_error(value, to);

@@ -737,7 +737,7 @@ impl<'a> Expander<'a> {
     fn operator_text(&self, e: &ast::Expr, typed: Option<&'a burdin_tir::Expr>, cx: &Cx<'a>) -> Option<String> {
         use ast::ExprKind as K;
         let call = peel_to_call(typed?)?;
-        let T::Call(fid, _) = &call.kind else { return None };
+        let T::Call(fid, _, _) = &call.kind else { return None };
         let method = self.program.functions[fid.0].name.rsplit('.').next()?.to_string();
         if !self.program.signatures[fid.0].has_self {
             return None;
@@ -784,7 +784,12 @@ impl<'a> Expander<'a> {
         cx: &Cx<'a>,
     ) -> Option<String> {
         let call = peel_to_call(typed?)?;
-        let T::Call(_, targs) = &call.kind else { return None };
+        let T::Call(_, targs, order) = &call.kind else { return None };
+        // Named arguments evaluate in source order (`spec/arguments.md`, AG6), so reordering a call whose
+        // arguments may have side effects would change its behavior (INS6); leave such calls as written.
+        if !order.is_empty() && args.iter().any(|a| !is_reorder_safe(&a.expr)) {
+            return None;
+        }
         // A method call's receiver is the first argument of the typed call.
         let skip = match &callee.kind {
             ast::ExprKind::Field(recv, _) if targs.first().is_some_and(|t| within(t.span, recv.span)) => 1,
@@ -1042,6 +1047,19 @@ fn escape(s: &str, quote: char) -> String {
         }
     }
     out
+}
+
+/// Whether an AST argument expression has no observable side effects, so reordering it into parameter order does
+/// not change evaluation order (`spec/arguments.md`, AG6).
+fn is_reorder_safe(e: &ast::Expr) -> bool {
+    use ast::ExprKind as K;
+    match &e.kind {
+        K::Int(_) | K::Float(_) | K::Bool(_) | K::Char(_) | K::Str(_) | K::Name { .. } | K::SelfValue => true,
+        K::Unary(_, inner) | K::Cast(inner, _) => is_reorder_safe(inner),
+        K::Field(base, _) | K::TupleField(base, _, _) => is_reorder_safe(base),
+        K::Tuple(items) | K::Array(items) => items.iter().all(is_reorder_safe),
+        _ => false,
+    }
 }
 
 /// The call under the wrappers that share its span (a cast, a `String` to `str` borrow).

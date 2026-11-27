@@ -789,6 +789,8 @@ impl<'p> Interp<'p, '_> {
                 self.mem.release(addr, span).map_err(Unwind::Fault)?;
                 Value::Unit
             }
+            // The interpreter has no checking allocator: its containers are values, not blocks (AL9, AL10).
+            Builtin::AllocCount => Value::Int(0),
             Builtin::ListNewIn
             | Builtin::ListWithCapacityIn
             | Builtin::ListTryWithCapacityIn

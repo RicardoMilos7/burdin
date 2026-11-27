@@ -49,7 +49,7 @@ impl<'p> Refs<'p> {
 impl Visit for Refs<'_> {
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
-            ExprKind::Call(id, _) if id.0 < self.program.functions.len() => self.calls.push((*id, e.span)),
+            ExprKind::Call(id, _, _) if id.0 < self.program.functions.len() => self.calls.push((*id, e.span)),
             ExprKind::BoxAny { vtable, .. } => {
                 for entry in &self.program.any_vtables[*vtable].entries {
                     if entry.0 < self.program.functions.len() {

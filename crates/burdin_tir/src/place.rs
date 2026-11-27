@@ -125,7 +125,7 @@ pub fn place_mentions(e: &Expr, out: &mut Vec<Place>) {
         K::Unary(_, inner) | K::ArrayRepeat(inner, _) => place_mentions(inner, out),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| place_mentions(x, out)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| place_mentions(x, out)),
-        K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+        K::Call(_, args, _) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter().for_each(|x| place_mentions(x, out));
         }
         // A closure mentions the places it captures; a closure call mentions its callee and arguments.
@@ -270,7 +270,7 @@ mod tests {
     }
 
     fn call(args: Vec<Expr>) -> Expr {
-        Expr { kind: ExprKind::Call(FuncId(0), args), ty: Ty::Unit, span: span() }
+        Expr { kind: ExprKind::Call(FuncId(0), args, Vec::new()), ty: Ty::Unit, span: span() }
     }
 
     #[test]
@@ -343,7 +343,7 @@ mod tests {
         // A user `Index` implementation lowers to `*x.index(i)`: the dereference names the element, but there is
         // no local root the drop-flag checker can follow (`spec/operators.md`, OP9-OP10).
         let call = Expr {
-            kind: ExprKind::Call(FuncId(0), vec![]),
+            kind: ExprKind::Call(FuncId(0), vec![], Vec::new()),
             ty: Ty::Ref { mutable: true, inner: Box::new(i32_()) },
             span: span(),
         };

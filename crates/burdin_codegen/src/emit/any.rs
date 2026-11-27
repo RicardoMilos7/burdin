@@ -123,6 +123,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     /// A method call through the vtable (AN5): `data` is the receiver, then the interface's parameters as a
     /// direct call lowers them.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn any_call(
         &mut self,
         recv: &'a tir::Expr,
@@ -130,6 +131,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         slot: usize,
         params: &'a [tir::ParamSig],
         args: &'a [tir::Expr],
+        eval_order: &[usize],
         ret: &Ty,
     ) -> GenResult<Option<BasicValueEnum<'ctx>>> {
         let boxed = self.any_borrow(recv)?;
@@ -140,24 +142,30 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let slot_ptr =
             self.builder.build_struct_gep(vtable_ty, vtable, (4 + slot) as u32, "any.slot").map_err(llvm_err)?;
         let method = self.builder.build_load(ptr_ty, slot_ptr, "any.method").map_err(llvm_err)?.into_pointer_value();
-        let mut fn_params: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
-        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = vec![data.into()];
-        for (a, p) in args.iter().zip(params) {
+        let mut evaluated: Vec<Option<(BasicMetadataTypeEnum<'ctx>, BasicMetadataValueEnum<'ctx>)>> =
+            vec![None; args.len()];
+        for i in burdin_tir::eval_order(args.len(), eval_order) {
+            let Some(p) = params.get(i) else { continue };
+            let a = &args[i];
             if p.by_ref {
-                fn_params.push(ptr_ty.into());
                 let ptr = match self.place_ptr(a)? {
                     Some(ptr) => ptr,
                     None => ptr_ty.get_undef(),
                 };
-                values.push(ptr.into());
+                evaluated[i] = Some((ptr_ty.into(), ptr.into()));
                 continue;
             }
             let m = if p.own { Mode::Move } else { Mode::Use };
             let v = self.expr_mode(a, m)?;
             if let Some(t) = self.llvm_ty(&p.ty) {
-                fn_params.push(t.into());
-                values.push(self.need(v, &p.ty).into());
+                evaluated[i] = Some((t.into(), self.need(v, &p.ty).into()));
             }
+        }
+        let mut fn_params: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_ty.into()];
+        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = vec![data.into()];
+        for (ty, val) in evaluated.into_iter().flatten() {
+            fn_params.push(ty);
+            values.push(val);
         }
         let fn_ty = match self.llvm_ty(ret) {
             Some(t) => t.fn_type(&fn_params, false),

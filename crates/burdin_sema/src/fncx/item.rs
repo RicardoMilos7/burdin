@@ -1,7 +1,6 @@
 //! The entry points of body checking: one constant, or one function.
 
 use super::FnCx;
-use crate::consts::is_const_expr;
 use crate::globals::Globals;
 use crate::session::FnItem;
 use crate::types::compatible;
@@ -9,19 +8,19 @@ use burdin_diag::{Code, Diagnostics, SourceMap};
 use burdin_syntax::ast;
 use burdin_tir::{self as tir, LocalKind, Signature, Ty};
 
-/// Checks the default argument of every parameter written `name: Type = expr` and stores the checked constant
-/// expression in `sig` (`spec/arguments.md`, AG2). A default is checked once, in the function's declaration
-/// context, with no parameters or locals in scope; every call that omits the argument inserts the value. The
-/// invalid forms (before a required parameter, on a `mut` parameter, depending on a type parameter, or not a
-/// constant expression) are E0213.
-pub(crate) fn check_defaults(
+/// Validates the default-argument declarations of one function (`spec/arguments.md`, AG1-AG3) and attaches a
+/// synthetic `ConstId` to each valid parameter default so call sites reference it as a compile-time constant.
+/// Invalid defaults still receive an error-typed placeholder so calls do not report a misleading E0004 ("has no
+/// default") on top of the declaration error.
+pub(crate) fn check_default_signatures<'t, F>(
     globals: &Globals,
-    item: &FnItem,
+    item: &FnItem<'t>,
     sig: &mut Signature,
-    sources: &SourceMap,
-    traces: bool,
+    mut alloc_const: F,
     diags: &mut Diagnostics,
-) {
+) where
+    F: FnMut(usize, &str, &'t ast::Expr) -> tir::ConstId,
+{
     let f = item.decl;
     // A default may not precede a required parameter: a positional call could not tell which one an argument
     // fills, so the parameters with defaults must come last.
@@ -36,7 +35,7 @@ pub(crate) fn check_defaults(
                         Code::INVALID_DEFAULT,
                         name.span,
                         format!(
-                            "parameter `{}` has no default but follows one; the parameters with defaults must come last (spec/arguments.md, AG2)",
+                            "parameter `{}` has no default but follows one; the parameters with defaults must come last (spec/arguments.md, AG1)",
                             name.name
                         ),
                     )
@@ -47,23 +46,23 @@ pub(crate) fn check_defaults(
             _ => {}
         }
     }
-    for (p, ps) in f
-        .params
-        .iter()
-        .filter(|p| matches!(p.kind, ast::ParamKind::Named { .. }))
-        .zip(sig.params.iter_mut().filter(|p| p.name.is_some()))
-    {
+    let named_ast = f.params.iter().filter(|p| matches!(p.kind, ast::ParamKind::Named { .. }));
+    let named_sig = sig.params.iter_mut().enumerate().filter(|(_, p)| p.name.is_some());
+    for (p, (param_idx, ps)) in named_ast.zip(named_sig) {
         let Some(default) = &p.default else { continue };
+        let placeholder = tir::Expr { kind: tir::ExprKind::Unit, ty: Ty::Error, span: default.span };
         if ps.ty == Ty::Error {
+            ps.default = Some(placeholder);
             continue;
         }
         if p.convention == ast::Convention::Mut {
             let d = diags.error(
                 Code::INVALID_DEFAULT,
                 default.span,
-                "a `mut` parameter cannot have a default value: the callee writes to the caller's place, and a default has no place (spec/arguments.md, AG2)",
+                "a `mut` parameter cannot have a default value: the callee writes to the caller's place, and a default has no place (spec/arguments.md, AG1)",
             );
             d.label(p.span, "declared `mut` here");
+            ps.default = Some(placeholder);
             continue;
         }
         if globals.ty_has_param(&ps.ty) {
@@ -73,34 +72,48 @@ pub(crate) fn check_defaults(
                 "a default value cannot depend on a type parameter; give the parameter a concrete type (spec/arguments.md, AG2)",
             );
             d.label(p.span, "parameter type uses a type parameter");
+            ps.default = Some(placeholder);
             continue;
         }
-        let Some(value) = check_one(globals, item, default, &ps.ty, sources, traces, diags) else { continue };
-        if !is_const_expr(&value) {
+        if !globals.materializable(&ps.ty) {
             let d = diags.error(
-                Code::INVALID_DEFAULT,
+                Code::NOT_MATERIALIZABLE,
                 default.span,
-                "a default value must be a constant expression: literals, other constants, operators, and casts (spec/arguments.md, AG2)",
+                format!(
+                    "a default argument of type `{}` cannot be evaluated at compile time: its value is computed by \
+                     the compiler and copied into every call, so it must be a scalar, `str`, `String`, or a struct, \
+                     enum, tuple, array, `Option`, or `Result` of those (spec/arguments.md, AG2; spec/const-eval.md, CE3)",
+                    ps.ty
+                ),
             );
-            d.label(default.span, "not a constant expression");
+            d.label(default.span, "not a materializable compile-time type");
+            ps.default = Some(placeholder);
             continue;
         }
-        ps.default = Some(value);
+        if item.symbolic {
+            ps.default = Some(placeholder);
+            continue;
+        }
+        let param_name = ps.name.as_deref().unwrap_or("");
+        let cid = alloc_const(param_idx, param_name, default);
+        ps.default = Some(tir::Expr { kind: tir::ExprKind::Const(cid), ty: ps.ty.clone(), span: default.span });
     }
 }
 
-/// Checks one default expression in the function's declaration context, where no parameter or local is in
-/// scope. Returns `None` when the expression's type is unknown.
-fn check_one(
+/// Checks one default-argument expression as a compile-time constant in the function's declaration context, with
+/// no parameters, `self`, or locals in scope (`spec/arguments.md`, AG2; `spec/const-eval.md`, CE2).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn check_default_const(
     globals: &Globals,
     item: &FnItem,
+    param_name: &str,
     default: &ast::Expr,
     want: &Ty,
+    closures: std::rc::Rc<std::cell::RefCell<Vec<tir::Closure>>>,
     sources: &SourceMap,
     traces: bool,
     diags: &mut Diagnostics,
-) -> Option<tir::Expr> {
-    let closures = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+) -> tir::Const {
     let mut cx = FnCx::new(
         globals,
         diags,
@@ -114,11 +127,20 @@ fn check_one(
         item.name.clone(),
         traces,
     );
+    // Evaluated at compile time, so it may not name a static (`spec/globals.md`, GL1).
+    cx.const_init = true;
     cx.subst = item.subst.clone();
     cx.bounds = item.bounds.clone();
     let value = cx.expr(default, Some(want));
     let value = cx.expect_ty(value, want);
-    (value.ty != Ty::Error).then_some(value)
+    let locals = std::mem::take(&mut cx.locals);
+    tir::Const {
+        name: format!("default `{param_name}` of `{}`", item.name),
+        kind: tir::ConstKind::Const,
+        span: default.span,
+        value,
+        locals,
+    }
 }
 
 /// Checks the initializer of a constant against its declared type. Any expression of a materializable type is

@@ -560,7 +560,7 @@ impl FnCx<'_> {
                     return self.index_missing(base.ty, mutable, span);
                 }
                 self.check_index_receiver(&base, &sig.params[0], method);
-                let call = mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![base, index]), sig.ret.clone(), span);
+                let call = mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![base, index], Vec::new()), sig.ret.clone(), span);
                 mk(tir::ExprKind::DerefRef(Box::new(call)), (*inner).clone(), span)
             }
             ty @ (Ty::Struct(_) | Ty::Enum(_)) => {
@@ -579,7 +579,7 @@ impl FnCx<'_> {
                     return self.index_missing(ty, mutable, span);
                 }
                 self.check_index_receiver(&base, &sig.params[0], method);
-                let call = mk(tir::ExprKind::Call(f, vec![base, index]), sig.ret.clone(), span);
+                let call = mk(tir::ExprKind::Call(f, vec![base, index], Vec::new()), sig.ret.clone(), span);
                 mk(tir::ExprKind::DerefRef(Box::new(call)), (*inner).clone(), span)
             }
             ty => self.index_missing(ty, mutable, span),

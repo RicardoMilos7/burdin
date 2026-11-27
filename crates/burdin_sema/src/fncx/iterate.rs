@@ -476,10 +476,10 @@ impl FnCx<'_> {
             return mk(tir::ExprKind::Method(Method::IterNext, vec![it]), ret, span);
         }
         if let Ty::Param(_) = &it.ty {
-            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![it]), ret, span);
+            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![it], Vec::new()), ret, span);
         }
         match adt_key(&it.ty).and_then(|key| self.globals.methods.get(&(key, "next".to_string())).copied()) {
-            Some(f) => mk(tir::ExprKind::Call(f, vec![it]), ret, span),
+            Some(f) => mk(tir::ExprKind::Call(f, vec![it], Vec::new()), ret, span),
             None => {
                 self.diags.error(
                     Code::BOUND_NOT_SATISFIED,
@@ -606,7 +606,7 @@ impl FnCx<'_> {
             let pseudo = format!("{pname}::iterator");
             let ty = Ty::Param(pseudo.as_str().into());
             self.bounds.push((pseudo, vec![Bound::User(iface, vec![item.clone()])]));
-            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![iterable]), ty, span);
+            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![iterable], Vec::new()), ty, span);
         }
         if let Some(key) = adt_key(&iterable.ty)
             && !self.globals.methods.contains_key(&(key, "iter".to_string()))

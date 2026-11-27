@@ -142,25 +142,28 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.expr_mode(&program.consts[id.0].value, mode)?
             }
             K::Static(_) => self.expr_place(e, mode)?,
-            K::Call(f, args) => {
+            K::Call(f, args, order) => {
                 let program = self.program;
                 let callee = &program.functions[f.0];
-                let mut values: Vec<BasicMetadataValueEnum> = Vec::new();
-                for (a, p) in args.iter().zip(&callee.params) {
+                let mut evaluated: Vec<Option<BasicMetadataValueEnum>> = vec![None; args.len()];
+                for i in burdin_tir::eval_order(args.len(), order) {
+                    let Some(p) = callee.params.get(i) else { continue };
+                    let a = &args[i];
                     if callee.locals[p.0].by_ref {
                         let ptr = match self.place_ptr(a)? {
                             Some(ptr) => ptr,
                             None => self.cx.ptr_type(AddressSpace::default()).get_undef(),
                         };
-                        values.push(ptr.into());
+                        evaluated[i] = Some(ptr.into());
                         continue;
                     }
                     let m = if callee.locals[p.0].kind == LocalKind::OwnParam { Mode::Move } else { Mode::Use };
                     let v = self.expr_mode(a, m)?;
                     if self.llvm_ty(&callee.locals[p.0].ty).is_some() {
-                        values.push(self.need(v, &callee.locals[p.0].ty).into());
+                        evaluated[i] = Some(self.need(v, &callee.locals[p.0].ty).into());
                     }
                 }
+                let values: Vec<BasicMetadataValueEnum> = evaluated.into_iter().flatten().collect();
                 let call = self.builder.build_call(self.functions[f.0], &values, "").map_err(llvm_err)?;
                 match self.llvm_ty(&e.ty) {
                     Some(_) => call.try_as_basic_value().basic(),
@@ -197,8 +200,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             K::Closure { closure, captures } => self.closure_value(*closure, captures, e.span)?,
             K::ClosureCall { callee, args, kind } => self.closure_call(callee, args, *kind)?,
             K::BoxAny { value, vtable } => self.box_any(value, *vtable)?,
-            K::AnyCall { recv, iface, slot, params, args } => {
-                self.any_call(recv, *iface, *slot, params, args, &e.ty)?
+            K::AnyCall { recv, iface, slot, params, args, eval_order } => {
+                self.any_call(recv, *iface, *slot, params, args, eval_order, &e.ty)?
             }
             K::AnyUpcast { value, from, slot } => self.any_upcast(value, *from, *slot)?,
             K::AnyIs { value, type_id, .. } => self.any_is(value, *type_id)?,
