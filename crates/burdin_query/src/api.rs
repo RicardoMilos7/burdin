@@ -415,7 +415,7 @@ impl Visit for Finder<'_> {
                     },
                     None => What::Other,
                 },
-                ExprKind::Call(id, _) => What::Func(*id),
+                ExprKind::Call(id, _, _) => What::Func(*id),
                 ExprKind::Const(id) => What::Const(*id),
                 _ => What::Other,
             };

@@ -250,7 +250,10 @@ pub enum ExprKind {
     /// A `static` or `static mut` (`ConstId` names the declaration). A place, stored once for the whole program
     /// (`spec/globals.md`, GL3, GL4); it has no local root, so the memory checks treat it as static storage.
     Static(ConstId),
-    Call(FuncId, Vec<Expr>),
+    /// A direct call. `args` are in parameter order; `eval_order` lists parameter indices in source evaluation
+    /// order when named arguments were written out of order (`spec/arguments.md`, AG6), and is empty when
+    /// `0..args.len()`.
+    Call(FuncId, Vec<Expr>, Vec<usize>),
     /// A call to the C function `n` of [`crate::Program::externs`].
     ExternCall(usize, Vec<Expr>),
     Builtin(Builtin, Vec<Expr>),
@@ -275,13 +278,16 @@ pub enum ExprKind {
         vtable: usize,
     },
     /// A method call through an `any` value's vtable: `iface` indexes [`crate::Program::any_ifaces`], `slot` its
-    /// method list, and `params` are the method's parameter conventions without the receiver (AN5).
+    /// method list, and `params` are the method's parameter conventions without the receiver (AN5). `eval_order`
+    /// lists argument indices in source evaluation order when named arguments were written out of order (AG6),
+    /// and is empty when `0..args.len()`.
     AnyCall {
         recv: Box<Expr>,
         iface: usize,
         slot: usize,
         params: Vec<ParamSig>,
         args: Vec<Expr>,
+        eval_order: Vec<usize>,
     },
     /// `x.is<T>()` on an `any` value: whether the box holds exactly `target` (AN6). `type_id` indexes
     /// [`crate::Program::any_type_ids`].
@@ -461,4 +467,26 @@ pub enum Pat {
         rest: Option<Box<Pat>>,
         suffix: Vec<Pat>,
     },
+}
+
+/// Argument indices of a call in source evaluation order (`spec/arguments.md`, AG6): `order` when named
+/// arguments were written out of parameter order, otherwise `0..len`.
+pub fn eval_order(len: usize, order: &[usize]) -> EvalOrder<'_> {
+    if order.is_empty() { EvalOrder::Linear(0..len) } else { EvalOrder::Reordered(order.iter().copied()) }
+}
+
+pub enum EvalOrder<'a> {
+    Linear(std::ops::Range<usize>),
+    Reordered(std::iter::Copied<std::slice::Iter<'a, usize>>),
+}
+
+impl Iterator for EvalOrder<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        match self {
+            EvalOrder::Linear(r) => r.next(),
+            EvalOrder::Reordered(it) => it.next(),
+        }
+    }
 }

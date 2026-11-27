@@ -99,7 +99,7 @@ impl FnCx<'_> {
         // A type parameter with a `From<S>` bound converts from `S` (FR7). Its body is checked against the bound
         // here; the instances that replace the parameter convert for real.
         if matches!(target, Ty::Param(_)) && self.globals.converts_into(&target, &recv.ty, &self.bounds) {
-            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![recv]), target, span);
+            return mk(tir::ExprKind::Call(SYMBOLIC_CALL, vec![recv], Vec::new()), target, span);
         }
         let candidates: Vec<(Ty, FuncId)> =
             self.globals.conversions_into(&target, "from").iter().map(|c| (c.source.clone(), c.func)).collect();
@@ -130,7 +130,7 @@ impl FnCx<'_> {
             return error_expr(span);
         }
         let value = self.coerce_arg(recv, &source);
-        mk(tir::ExprKind::Call(func, vec![value]), sig.ret, span)
+        mk(tir::ExprKind::Call(func, vec![value], Vec::new()), sig.ret, span)
     }
 }
 

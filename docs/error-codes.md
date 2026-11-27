@@ -1423,13 +1423,13 @@ fn main() {}
 
 ## E0213: Invalid default argument
 
-A parameter written `name: Type = expr` declares a value the call may omit. The default is checked once at the
-declaration against the parameter's type, so it must be a constant expression (a literal, another constant, an
-operator on constants, or a cast), and the function's parameters and `self` are not in scope in it. A default may
-not depend on a type parameter, may not be declared on a `mut` parameter (which is the caller's place, not a
-value), may not appear in an interface method signature (shared by every implementation), and may not appear in
-an `extern "C"` declaration. The parameters with defaults must be the trailing ones: a default before a required
-parameter would make a positional call ambiguous. `spec/arguments.md` AG1-AG3 and AG5.
+A parameter written `name: Type = expr` declares a value the call may omit. The default is checked and evaluated once
+at compile time at the declaration against the parameter's type, with the same rules as `const`, and the function's
+parameters and `self` are not in scope in it. A default may not depend on a type parameter, may not be declared on a
+`mut` parameter (which is the caller's place, not a value), may not appear in an interface method signature (shared by
+every implementation), and may not appear in an `extern "C"` declaration. The parameters with defaults must be the
+trailing ones: a default before a required parameter would make a positional call ambiguous. `spec/arguments.md`
+AG1-AG3 and AG5.
 
 <!-- error-example: E0213 -->
 ```burdin

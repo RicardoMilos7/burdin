@@ -81,7 +81,9 @@ fn main() {
 ```
 
 A named argument uses the parameter's name and a colon. Positional arguments come first, and once one argument is named,
-every later argument must be named too. Named arguments may be written in any order.
+every later argument must be named too. Named arguments may be written in any order and are evaluated left to right in
+the order they are written. Default values are evaluated once at compile time, like `const` items, so they can call
+pure functions or build structs and enums.
 
 ## Arguments take the parameter's type
 

@@ -102,10 +102,11 @@ are recorded in `spec/errors.md` ERR1-ERR10. The new diagnostics are E0210 (inva
 `spec/grammar.md` are updated with them.
 
 Milestone 17 is complete: `tests/m17_arguments` and every earlier folder pass in debug and release, and the rules
-are recorded in `spec/arguments.md` AG1-AG7 (the decisions that a default is a constant expression checked at the
-declaration and materialized at the call site, that arguments are evaluated left to right in parameter order, that
-named arguments are matched to parameter names, and that interface signatures and `extern` declarations take no
-defaults). The new diagnostics are E0213 (invalid default) and E0214 (invalid named argument).
+are recorded in `spec/arguments.md` AG1-AG7 (the decisions that a default is a compile-time constant expression
+evaluated once at the declaration and materialized at the call site, that written arguments are evaluated left to
+right in source order, that named arguments are matched to parameter names, and that interface signatures and
+`extern` declarations take no defaults). The new diagnostics are E0213 (invalid default) and E0214 (invalid named
+argument).
 
 Milestone 18 is complete: `tests/m18_extension` and every earlier folder pass in debug and release, and the rules
 are recorded in `spec/extensions.md` EX1-EX9 (the decisions that an extension is visible in its declaring module and
@@ -303,13 +304,14 @@ code; do not invent them inside the implementation.
    compiled code (issue #444) once ran a test both ways; the `[differential]` attribute was removed with `comptime`.
 
 7. **Default and named arguments — settled with milestone 17.** A parameter written `name: Type = expr` may be
-   omitted at the call site. The default is a constant expression checked once at the declaration (the function's
-   parameters and `self` are not in scope), it cannot depend on a type parameter, and only trailing parameters may
-   have one; `mut` parameters, interface method signatures, and `extern` declarations cannot declare one (E0213).
-   A call may write `name: value` for a function, method, interface method, associated function, or generic
-   function/method; positional arguments fill the leading parameters and may not follow a named one, and an
-   unknown or repeated name is E0214. Every argument is evaluated left to right in parameter order, a default in
-   the position of its parameter. The rules are `spec/arguments.md` AG1-AG7 and the tests are
+   omitted at the call site. The default is a compile-time constant expression evaluated once at the declaration
+   with the same rules as `const` (the function's parameters and `self` are not in scope; E0221 if the type is
+   not materializable), it cannot depend on a type parameter, and only trailing parameters may have one; `mut`
+   parameters, interface method signatures, and `extern` declarations cannot declare one (E0213). A call may write
+   `name: value` for a function, method, interface method, associated function, or generic function/method;
+   positional arguments fill the leading parameters and may not follow a named one, and an unknown or repeated name
+   is E0214. Every written argument is evaluated left to right in source order; omitted defaults are compile-time
+   constants with no side effects. The rules are `spec/arguments.md` AG1-AG7 and the tests are
    `tests/m17_arguments/`.
 
 8. **Operator overloading and `Index` — settled with milestone 19.** The operator interfaces are the ordinary

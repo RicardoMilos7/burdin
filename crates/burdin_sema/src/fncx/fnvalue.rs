@@ -57,7 +57,7 @@ impl FnCx<'_> {
         // A parameter the callee borrows exclusively (`mut x`, `mut self`) needs a mutable argument local.
         let mutable: Vec<bool> = sig.params.iter().map(|p| p.mut_param || (p.by_ref && p.exclusive)).collect();
         let ret = sig.ret.clone();
-        self.value_closure(fn_sig, &mutable, span, |args| mk(tir::ExprKind::Call(f, args), ret, span))
+        self.value_closure(fn_sig, &mutable, span, |args| mk(tir::ExprKind::Call(f, args, Vec::new()), ret, span))
     }
 
     /// A built-in function used as a value (`println`, `panic`, the runtime helpers). Its signature is fixed.

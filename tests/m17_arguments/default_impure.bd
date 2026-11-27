@@ -1,0 +1,15 @@
+//@ compile-fail
+
+// A default argument is evaluated at compile time, so an impure operation in it is E0224
+// (`spec/arguments.md`, AG2; `spec/const-eval.md`, CE6).
+
+fn noisy(): i32 {
+    println("side effect")
+    1
+}
+
+fn f(a: i32 = noisy()): i32 { a } //~ E0224
+
+fn main() {
+    let _ = f()
+}

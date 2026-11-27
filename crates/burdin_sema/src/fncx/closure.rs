@@ -623,7 +623,7 @@ fn walk(e: &tir::Expr, captures: &[tir::Capture], globals: &Globals, usage: &mut
                 walk(a, captures, globals, usage, Mode::Use);
             }
         }
-        K::Call(f, args) => {
+        K::Call(f, args, _) => {
             // The callee's conventions decide whether a capture moves (`own`) or is only borrowed.
             let sig = globals.sigs.get(f.0);
             for (i, a) in args.iter().enumerate() {

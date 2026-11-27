@@ -230,7 +230,7 @@ impl<'a> Checker<'a> {
         use tir::ExprKind as K;
         match &e.kind {
             K::DerefRef(base) | K::Field(base, _) => self.reference_origin(base),
-            K::Call(f, args) => {
+            K::Call(f, args, _) => {
                 let Some(sig) = self.env.sigs.get(f.0) else { return Vec::new() };
                 // A chainable view (`xs.iter()`, `xs.as_slice()`) takes its loan where its receiver is a place, and
                 // `mut self` on it must not borrow the view's source exclusively.
@@ -406,7 +406,7 @@ impl<'a> Checker<'a> {
                     self.add_loan(callee, mutable);
                 }
             }
-            K::Call(f, args) => self.call(f.0, args),
+            K::Call(f, args, order) => self.call(f.0, args, order),
             // C functions borrow nothing from Burdin values: their arguments are scalars and raw pointers.
             K::ExternCall(_, args) => {
                 for arg in args {
@@ -466,7 +466,7 @@ impl<'a> Checker<'a> {
             K::AnyDowncast { value, .. } => self.expr(value, Mode::Move),
             // A dynamic call borrows the box: shared for `self`, exclusive for `mut self`. Its result is always
             // an owned type (object safety), so it holds no loan after the call.
-            K::AnyCall { recv, iface, slot, params, args } => {
+            K::AnyCall { recv, iface, slot, params, args, eval_order } => {
                 let exclusive = self
                     .env
                     .any_ifaces
@@ -480,7 +480,12 @@ impl<'a> Checker<'a> {
                 } else {
                     self.access_place(recv, Access::Read);
                 }
-                for (a, p) in args.iter().zip(params) {
+                for i in burdin_tir::eval_order(args.len(), eval_order) {
+                    let a = &args[i];
+                    let Some(p) = params.get(i) else {
+                        self.expr(a, Mode::Use);
+                        continue;
+                    };
                     if p.own {
                         self.expr(a, Mode::Move);
                     } else if p.exclusive {
@@ -671,7 +676,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn call(&mut self, f: usize, args: &[tir::Expr]) {
+    fn call(&mut self, f: usize, args: &[tir::Expr], order: &[usize]) {
         // A call the compiler generated (an interpolated string's formatter) borrows for real, but the lens does
         // not show its internals.
         let generated = self.env.internal.get(f).copied().unwrap_or(false);
@@ -679,7 +684,8 @@ impl<'a> Checker<'a> {
         self.suppress_events = saved || generated;
         let sig = &self.env.sigs[f];
         let loans_before = self.loans.len();
-        for (i, arg) in args.iter().enumerate() {
+        for i in burdin_tir::eval_order(args.len(), order) {
+            let arg = &args[i];
             let Some(param) = sig.params.get(i) else {
                 self.expr(arg, Mode::Use);
                 continue;
@@ -865,7 +871,7 @@ fn locals_used(e: &tir::Expr, out: &mut Vec<LocalId>) {
         | K::ConstCond(inner) => locals_used(inner, out),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| locals_used(x, out)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| locals_used(x, out)),
-        K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+        K::Call(_, args, _) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter().for_each(|x| locals_used(x, out));
         }
         K::AnyCall { recv, args, .. } => {
@@ -996,7 +1002,7 @@ fn uses_expr(e: &tir::Expr, stmt: usize, last: &mut [Option<usize>]) {
         | K::ConstCond(inner) => uses_expr(inner, stmt, last),
         K::Array(elems) | K::Tuple(elems) => elems.iter().for_each(|x| uses_expr(x, stmt, last)),
         K::Struct(fields) | K::Variant(_, fields) => fields.iter().for_each(|(_, x)| uses_expr(x, stmt, last)),
-        K::Call(_, args) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
+        K::Call(_, args, _) | K::ExternCall(_, args) | K::Builtin(_, args) | K::Method(_, args) => {
             args.iter().for_each(|x| uses_expr(x, stmt, last));
         }
         K::AnyCall { recv, args, .. } => {

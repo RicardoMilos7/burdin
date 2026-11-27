@@ -1,11 +1,13 @@
 //! Checking the bodies of constants and functions, through the body cache (`crate::cache`).
 
 use crate::cache::{CheckCache, Fingerprinter, ItemKey, Value, fp_of_str};
-use crate::fncx::{check_const, check_function};
+use crate::fncx::{check_const, check_default_const, check_function};
 use crate::session::{FnItem, Sema};
 use burdin_diag::{Diagnostics, Span};
+use burdin_syntax::ast;
 use burdin_tir as tir;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -49,6 +51,64 @@ impl Sema<'_> {
             });
             let Value::Const(c) = value else { unreachable!("a constant produces a constant") };
             consts.push(c);
+        }
+        // Check default-argument constants (`spec/arguments.md`, AG2) right after module `const`s, so their
+        // `ConstId`s match `self.const_decls.len() + index` and any closures or generic requests they create
+        // are collected with the program.
+        let span_key = |s: Span| (s.file.0, s.lo, s.hi);
+        let mut checked_default_spans: HashSet<(u32, u32, u32)> = HashSet::new();
+        for d in &self.default_consts {
+            if cache.cancelled() {
+                return None;
+            }
+            let item = &self.fn_items[d.func_id];
+            let ty = &self.globals.sigs[d.func_id].params[d.param_idx].ty;
+            checked_default_spans.insert(span_key(d.default.span));
+            consts.push(check_default_const(
+                &self.globals,
+                item,
+                &d.param_name,
+                d.default,
+                ty,
+                closures.clone(),
+                self.sources,
+                self.traces,
+                diags,
+            ));
+        }
+        // Check concrete-typed defaults on uncalled generic functions so errors in them are still reported.
+        for (i, item) in self.fn_items.iter().enumerate() {
+            if !item.symbolic {
+                continue;
+            }
+            let sig = &self.globals.sigs[i];
+            let named_ast = item.decl.params.iter().filter(|p| matches!(p.kind, ast::ParamKind::Named { .. }));
+            let named_sig = sig.params.iter().filter(|p| p.name.is_some());
+            for (p, ps) in named_ast.zip(named_sig) {
+                let Some(default) = &p.default else { continue };
+                if checked_default_spans.contains(&span_key(default.span))
+                    || ps.ty == tir::Ty::Error
+                    || p.convention == ast::Convention::Mut
+                    || self.globals.ty_has_param(&ps.ty)
+                    || !self.globals.materializable(&ps.ty)
+                {
+                    continue;
+                }
+                checked_default_spans.insert(span_key(default.span));
+                let sink = Rc::new(RefCell::new(Vec::new()));
+                let param_name = ps.name.as_deref().unwrap_or("");
+                let _ = check_default_const(
+                    &self.globals,
+                    item,
+                    param_name,
+                    default,
+                    &ps.ty,
+                    sink,
+                    self.sources,
+                    self.traces,
+                    diags,
+                );
+            }
         }
         let mut functions = Vec::with_capacity(self.fn_items.len());
         for (i, item) in self.fn_items.iter().enumerate() {

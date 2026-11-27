@@ -42,7 +42,7 @@ Counter {
 fn main() {
     println("{}", add(5, 10))
     println("{}", add(5, 7))
-    println("{}", finish(1))
+    println("{}", finish(1, 42))
     let mut c = Counter { value: 0 }
     println("{}", c.bump(1))
     println("{}", c.bump(10))

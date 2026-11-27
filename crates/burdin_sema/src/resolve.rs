@@ -262,11 +262,33 @@ impl Sema<'_> {
                 p.own = true;
                 p.exclusive = true;
             }
-            crate::fncx::check_defaults(&self.globals, item, &mut sig, self.sources, self.traces, diags);
             self.globals.sigs[i] = sig;
         }
         for (i, c) in self.const_decls.iter().enumerate() {
             self.globals.const_tys[i] = self.globals.resolve_type(&c.decl.ty, None, c.module, diags);
+        }
+        let const_base = self.const_decls.len();
+        for (i, item) in self.fn_items.iter().enumerate() {
+            let mut sig = std::mem::replace(&mut self.globals.sigs[i], Signature::placeholder());
+            crate::fncx::check_default_signatures(
+                &self.globals,
+                item,
+                &mut sig,
+                |param_idx, param_name, default| {
+                    *self.default_const_ids.entry((i, param_idx)).or_insert_with(|| {
+                        let id = tir::ConstId(const_base + self.default_consts.len());
+                        self.default_consts.push(crate::session::DefaultConst {
+                            func_id: i,
+                            param_idx,
+                            param_name: param_name.to_string(),
+                            default,
+                        });
+                        id
+                    })
+                },
+                diags,
+            );
+            self.globals.sigs[i] = sig;
         }
         let externs: Vec<(usize, &ast::FnDecl, usize, String)> = self
             .extern_srcs
