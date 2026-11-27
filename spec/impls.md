@@ -87,7 +87,7 @@ of such a block follow IM2: the block covers an instance when the bounds hold, w
 
 | Code | Meaning |
 | --- | --- |
-| E0003 | The wrong number of arguments, or an impl written through an alias (`spec/type-aliases.md` AL5) |
+| E0003 | The wrong number of arguments, or an impl on a type (or alias of one) that cannot have methods (`spec/type-aliases.md` AL5) |
 | E0007 | A name repeated in an impl header, or two methods of one name on one instance |
 | E0131 | A `Drop` impl for specific arguments or with a `where` clause, or one that is not exactly one `drop` |
 | E0141 | An argument that does not meet a bound of the type |

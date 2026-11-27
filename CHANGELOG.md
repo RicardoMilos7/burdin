@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #921: an `impl` block may now name a type through a type alias, generic or not (`Stacked<T> { ... }`,
+  `Stacked<T>: Describe { ... }`, `Ints { ... }` for `type Stacked<T> = Stack<T>` and `type Ints = Stack<i32>`).
+  `burdin_sema` expands aliases in the impl header (`impl_head` / `expand_impl_head`) before checking the target type,
+  keeping arity (E0003), bounds (E0141), and cycle (E0009) checks on the alias and applying the target type's impl
+  rules. Updated `spec/type-aliases.md` AL5, `spec/grammar.md`, `spec/impls.md`, `tests/README.md`,
+  `tests/m21_reflect/alias_generic.bd`, `tests/m21_reflect/alias_invalid.bd`, and `crates/burdin_sema/src/impl_tests.rs`.
 - Issue #1021: `std/src/fs.bd` walks, reads, and copies without per-entry or per-chunk overhead. Three new runtime
   primitives (`__dir_open`, `__dir_next`, `__dir_close`) read a directory one name at a time into a reused buffer.
   `walk` and `walk_glob` run as one `offload` that calls the primitives directly, build every path in one reused

@@ -43,15 +43,23 @@ others, is E0009 at the declaration, like the aliases of stage 0.
 
 `Pair<i32>` and `(i32, i32)` are the same type: a value of one is a value of the other, methods and interface
 implementations are those of the aliased type, and diagnostics print the aliased type. An alias adds no methods
-and no implementations of its own: an `impl` block names the type itself, and one written through an alias, generic or
-not, is E0003 (`Stacked<i32> { ... }` for `type Stacked<T> = Stack<T>`; write `Stack<i32> { ... }`). The one place an
-alias is looked through by name is `main`'s return type (AL7).
+and no implementations of its own, but an `impl` block may name the type through one, generic or not: the alias in
+the block's header is expanded like any other use (AL2), and the block is the aliased type's. For
+`type Stacked<T> = Stack<T>`, `Stacked<i32> { ... }` is `Stack<i32> { ... }`, `Stacked<T>: Describe { ... }` is
+`Stack<T>: Describe { ... }`, and for `type Ints = Stack<i32>`, `Ints { ... }` is `Stack<i32> { ... }`. The names in the
+written arguments that are not types are the impl's own, as in any impl header (`spec/impls.md`, IM1); each stands
+for what it is written for, whatever the alias calls its parameter. The alias's arity (E0003), its bounds on a
+concrete argument (E0141), and its cycles (E0009) are checked as at any other use, and the expanded type is held to
+the rules of an impl header written directly: methods go only on a struct or enum (`Pair<i32> { ... }` is E0003, a
+tuple), the orphan rule applies to the aliased type (E0142), and a method added through an alias and again directly is
+E0007. A name in the header keeps the bounds the aliased type and the block's `where` clause give it, not the
+alias's. The one place an alias is looked through by name is `main`'s return type (AL7).
 
 ## AL6. Errors
 
 | Code | Meaning |
 | --- | --- |
-| E0003 | The wrong number of arguments, or an `impl` block written through an alias |
+| E0003 | The wrong number of arguments, or an `impl` block through an alias of a type that cannot have methods |
 | E0007 | A parameter name repeated |
 | E0009 | An alias that expands into itself |
 | E0141 | An argument that does not meet a parameter's bound |
@@ -68,7 +76,10 @@ expand to `Result`. An alias cycle reached from `main`'s return type is E0009 at
 
 ## Tests
 
-`alias_generic` (tuples, arrays with a const parameter, a map, alias of alias, a generic struct field, `Table<i32>.new()`)
-and `alias_invalid` (E0003, E0009, E0141, and the impl through an alias). AL7 is `tests/m16_errors/main_result_alias.bd`
+`alias_generic` (tuples, arrays with a const parameter, a map, alias of alias, a generic struct field, `Table<i32>.new()`,
+and impl blocks through a generic alias, an alias of an instance, an alias of an alias, and an alias of a struct)
+and `alias_invalid` (E0003, E0009, E0141, and an impl through an alias with the wrong arity, a cycle, or a tuple). The
+Rust unit tests `an_impl_through_an_alias_*` in `crates/burdin_sema/src/impl_tests.rs` cover the same cases and the
+alias's bounds. AL7 is `tests/m16_errors/main_result_alias.bd`
 (run), `main_result_alias_generic.bd` (a generic alias and an alias of it, run-abort), `main_alias_not_result.bd` (E0003),
 `main_result_alias_cycle.bd` (E0009), and `main_result_alias_imported/` (an imported alias, E0003).

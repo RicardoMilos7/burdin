@@ -241,7 +241,7 @@ An item that starts with an identifier (not a keyword) is an impl block. `Type: 
 `Type { ... }` adds methods with no interface, and generics and `where` bounds go on either. The type of an impl block
 is a type path, which may name the arguments of a generic type (`Stack<i32>`, `Pair<i32, B>`): the names in them that
 are not types are the block's own parameters, and the block covers the instances they match (`impls.md` IM1-IM2).
-An impl block cannot be written through a type alias (`type-aliases.md` AL5).
+An impl block may name the type through a type alias (`type-aliases.md` AL5).
 
 **`repr(C)`.** `struct Name repr(C) { ... }` gives a struct the C layout: fields in declaration order with C padding
 and alignment, reported by `Type.size()` and `Type.align()`. It may be used behind `CPtr<T>` in the C bridge; passing
