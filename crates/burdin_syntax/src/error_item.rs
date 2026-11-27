@@ -34,7 +34,7 @@ fn lower_error_enum(e: ErrorEnumDecl, id: FileId, diags: &mut Diagnostics) -> Ve
     let name_span = e.name.span;
     // Validate the templates and the `from` clauses first, while the variants can still be borrowed.
     let messages: Vec<String> = e.variants.iter().map(|v| message_source(v, diags)).collect();
-    let mut seen: Vec<String> = Vec::new();
+    let mut seen: Vec<(String, Span)> = Vec::new();
     let mut conversions: Vec<(String, String)> = Vec::new();
     for v in &e.variants {
         if let Some(source) = from_source(&e, v, &mut seen, diags) {
@@ -326,39 +326,49 @@ fn from_impl(name: &str, variant: &str, source: &str) -> String {
 }
 
 /// The source type of one `from` conversion, or `None` when the clause is invalid (and reported).
-fn from_source(e: &ErrorEnumDecl, v: &ErrorVariant, seen: &mut Vec<String>, diags: &mut Diagnostics) -> Option<String> {
+fn from_source(
+    e: &ErrorEnumDecl,
+    v: &ErrorVariant,
+    seen: &mut Vec<(String, Span)>,
+    diags: &mut Diagnostics,
+) -> Option<String> {
     let from_span = v.from?;
     if !e.generics.is_empty() {
-        diags.error(INVALID_ERROR, from_span, "a generic error enum cannot declare `from`");
+        let d = diags.error(INVALID_ERROR, from_span, "a generic error enum cannot declare `from`");
+        d.label(from_span, "`from` not allowed on a generic `error enum`");
         return None;
     }
     let field = match &v.kind {
         VariantKind::Tuple(types) if types.len() == 1 => &types[0],
         _ => {
-            diags.error(
+            let d = diags.error(
                 INVALID_ERROR,
                 from_span,
                 format!("`from` on variant `{}` needs a tuple payload with exactly one field", v.name.name),
             );
+            d.label(from_span, "requires a single-field tuple variant");
             return None;
         }
     };
     let source = match render_type(field) {
         Some(source) => source,
         None => {
-            diags.error(
+            let d = diags.error(
                 INVALID_ERROR,
                 field.span,
                 "this payload type cannot be written back as the source type of a `from` impl",
             );
+            d.label(field.span, "unsupported `from` payload type");
             return None;
         }
     };
-    if seen.iter().any(|s| s == &source) {
-        diags.error(DUPLICATE_FROM, from_span, format!("two variants convert from the same type `{source}`"));
+    if let Some((_, first_span)) = seen.iter().find(|(s, _)| s == &source) {
+        let d = diags.error(DUPLICATE_FROM, from_span, format!("two variants convert from the same type `{source}`"));
+        d.label(from_span, format!("duplicate `from` for `{source}`"));
+        d.label(*first_span, format!("first `from` for `{source}` here"));
         return None;
     }
-    seen.push(source.clone());
+    seen.push((source.clone(), from_span));
     Some(source)
 }
 

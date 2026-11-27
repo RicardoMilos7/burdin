@@ -1,0 +1,34 @@
+error[E0100]: use of moved value `t`
+  --> tests/diagnostics/multi.bd:18:13
+   |
+16 |     let t = Thing { id: 1 }
+   |         - `t` is declared here
+17 |     take(t)
+   |          - value moved here
+18 |     let u = t
+   |             ^ value used here after move
+   |
+   = note: spec/memory-rules.md, MV1: moving a non-Copy value transfers
+           ownership
+   = help: run `burdin check --explain` to trace the path to this error
+
+error[E0114]: this parameter of `bump` is `mut`; pass the argument as `mut ...`
+  --> tests/diagnostics/multi.bd:20:10
+   |
+20 |     bump(c)
+   |          ^
+   |
+help: add `mut` before this argument
+   |
+20 - bump(c)
+20 + bump(mut c)
+   |
+
+error[E0003]: expected `i32`, found `str`
+  --> tests/diagnostics/multi.bd:21:18
+   |
+21 |     let s: i32 = "añ𝄞"
+   |                  ^^^^^ found `str`
+   |
+error: could not check tests/diagnostics/multi.bd (3 errors)
+note: for an explanation of an error code, run `burdin explain <code>`

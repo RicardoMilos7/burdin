@@ -192,22 +192,22 @@ fn evaluate_consts(program: &Program, consts: &mut Vec<ConstState>, opts: Option
             continue;
         }
         let c = &program.consts[id];
-        let result = {
+        let (result, trace) = {
             let mut it = Interp::new(program, consts, opts.steps, opts.overflow_checks, opts.debug_assertions);
-            it.eval_root(&c.locals, &c.value)
+            (it.eval_root(&c.locals, &c.value), it.fault_trace)
         };
         match result {
             Ok(v) => consts[id] = ConstState::Done(v),
             Err(fault) => {
                 consts[id] = ConstState::Failed;
-                report(program, diags, fault, c.span, &format!("the constant `{}`", c.name));
+                report(program, diags, fault, &trace, c.span, &format!("the constant `{}`", c.name));
             }
         }
     }
 }
 
 /// Reports a failed evaluation at `at`, the constant, condition, or call it belongs to.
-fn report(p: &Program, diags: &mut Diagnostics, fault: Fault, at: Span, what: &str) {
+fn report(p: &Program, diags: &mut Diagnostics, fault: Fault, trace: &[(String, Span)], at: Span, what: &str) {
     let (code, message, op) = match fault {
         Fault::Reported => return,
         Fault::Panic(msg, op) => {
@@ -228,9 +228,19 @@ fn report(p: &Program, diags: &mut Diagnostics, fault: Fault, at: Span, what: &s
             return;
         }
     };
+    let is_budget = code == Code::CONST_BUDGET;
     let d = diags.error(code, at, message);
+    d.label(at, format!("while evaluating {what}"));
     if let Some(op) = op.filter(|op| *op != at) {
         d.note(op, "this operation failed while the compiler was evaluating it");
+    }
+    for (fn_name, call_span) in trace.iter().take(8) {
+        if *call_span != at {
+            d.note(*call_span, format!("in compile-time call to `{fn_name}`"));
+        }
+    }
+    if is_budget {
+        d.help("raise the limit with `--const-steps <n>`");
     }
 }
 
@@ -263,7 +273,7 @@ struct Rewriter<'a> {
 }
 
 impl Rewriter<'_> {
-    fn eval(&mut self, locals: &[Local], e: &Expr) -> Result<Value, Fault> {
+    fn eval(&mut self, locals: &[Local], e: &Expr) -> Result<Value, (Fault, Vec<(String, Span)>)> {
         let mut it = Interp::new(
             self.p,
             &mut self.consts,
@@ -271,7 +281,7 @@ impl Rewriter<'_> {
             self.opts.overflow_checks,
             self.opts.debug_assertions,
         );
-        it.eval_root(locals, e)
+        it.eval_root(locals, e).map_err(|f| (f, it.fault_trace))
     }
 
     fn rewrite_block(&mut self, locals: &[Local], b: &mut Block) {
@@ -290,8 +300,8 @@ impl BodyCx<'_, '_, '_> {
     fn eval(&mut self, e: &Expr) -> Option<Value> {
         match self.rw.eval(self.locals, e) {
             Ok(v) => Some(v),
-            Err(fault) => {
-                report(self.rw.p, self.rw.diags, fault, e.span, "this condition");
+            Err((fault, trace)) => {
+                report(self.rw.p, self.rw.diags, fault, &trace, e.span, "this condition");
                 None
             }
         }

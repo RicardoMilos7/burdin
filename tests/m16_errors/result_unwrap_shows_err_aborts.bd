@@ -1,0 +1,9 @@
+//@ run-abort
+//@ stderr: called `unwrap` on a `Err` value: bad config
+fn fail(): Result<i32, str> {
+    Result.Err("bad config")
+}
+
+fn main() {
+    let _ = fail().unwrap()
+}

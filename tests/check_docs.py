@@ -278,15 +278,18 @@ with harness.temporary_dir("burdin-docs-") as work:
             expect_status("BURDIN_CC (missing linker)", 2)
             expect_contains("BURDIN_CC (missing linker)", "BURDIN_CC", stderr)
 
-            # Diagnostics: path:LINE:COL: error[CODE]: message, then the summary.
+            # Diagnostics: cargo/gleam style by default, and path:LINE:COL: error[CODE]: message in short format.
             harness.write_text(work / "bad.bd", 'fn main() {\n    let x: i32 = "hi"\n}\n')
             drive("build", "bad.bd")
             expect_status("diagnostics", 1)
+            expect_contains("diagnostics", "error[E0003]", stderr)
+            expect_contains("diagnostics", "--> bad.bd:2:", stderr)
+            expect_contains("diagnostics", "error: could not compile bad.bd (1 error)", stderr)
+            drive("build", "bad.bd", "--diagnostic-format=short")
+            expect_status("diagnostics (short)", 1)
             checks += 1
             if not stderr.startswith("bad.bd:2:"):
-                add_problem(f"diagnostics: no 'bad.bd:2:...' line: {stderr}")
-            expect_contains("diagnostics", "error[E0003]", stderr)
-            expect_contains("diagnostics", "error: could not compile bad.bd (1 error)", stderr)
+                add_problem(f"diagnostics (short): no 'bad.bd:2:...' line: {stderr}")
 
             # test: the FAIL lines and the summary, with a failing test exiting 1.
             # The directory is `app` while the package is `demo`, so the default output `./demo` cannot

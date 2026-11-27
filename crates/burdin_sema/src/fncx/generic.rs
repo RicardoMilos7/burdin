@@ -715,10 +715,13 @@ impl FnCx<'_> {
                 }
             };
             let Some(index) = defs.iter().position(|d| d.name == f.name.name) else {
-                self.diags.error(
-                    Code::UNKNOWN_NAME,
-                    f.name.span,
+                let available: Vec<String> = defs.iter().map(|d| d.name.clone()).collect();
+                let refs: Vec<&str> = available.iter().map(String::as_str).collect();
+                self.report_no_field(
                     format!("`{}` has no field `{}`", info.name, f.name.name),
+                    &f.name.name,
+                    f.name.span,
+                    &refs,
                 );
                 self.expr(value, None);
                 continue;
@@ -808,7 +811,9 @@ impl FnCx<'_> {
         let id = info.identity.1;
         let written = format!("{}.{}", info.name, name.name);
         let Some(vi) = globals.enums[id].variants.iter().position(|v| v.name == name.name) else {
-            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("unknown variant `{written}`"));
+            let variants: Vec<String> = globals.enums[id].variants.iter().map(|v| v.name.clone()).collect();
+            let refs: Vec<&str> = variants.iter().map(String::as_str).collect();
+            self.report_no_variant(format!("unknown variant `{written}`"), &name.name, name.span, &refs);
             self.check_field_values_untyped(fields);
             return error_expr(span);
         };
@@ -834,10 +839,13 @@ impl FnCx<'_> {
                 }
             };
             let Some(index) = defs.iter().position(|d| d.name == f.name.name) else {
-                self.diags.error(
-                    Code::UNKNOWN_NAME,
-                    f.name.span,
+                let available: Vec<String> = defs.iter().map(|d| d.name.clone()).collect();
+                let refs: Vec<&str> = available.iter().map(String::as_str).collect();
+                self.report_no_field(
                     format!("`{written}` has no field `{}`", f.name.name),
+                    &f.name.name,
+                    f.name.span,
+                    &refs,
                 );
                 self.expr(value, None);
                 continue;

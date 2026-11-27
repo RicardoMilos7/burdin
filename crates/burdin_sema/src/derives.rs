@@ -101,15 +101,20 @@ pub(crate) fn check_derives(
         if globals.has_drop_impl(ty)
             && let Some(span) = derives.copy_span
         {
-            diags.error(Code::DERIVE_REQUIREMENT, span, "a type that implements `Drop` cannot derive `Copy`");
+            let d = diags.error(Code::DERIVE_REQUIREMENT, span, "a type that implements `Drop` cannot derive `Copy`");
+            d.label(span, "cannot derive `Copy` on a type with `Drop`");
         }
         for (fty, span) in fields {
             if !globals.is_copy(fty) {
-                diags.error(
+                let d = diags.error(
                     Code::DERIVE_REQUIREMENT,
                     *span,
                     format!("`Copy` requires every field to be `Copy`, but this one is `{fty}`"),
                 );
+                d.label(*span, format!("field type `{fty}` is not `Copy`"));
+                if let Some(cspan) = derives.copy_span {
+                    d.label(cspan, "`Copy` derived here");
+                }
             }
         }
     }
@@ -132,11 +137,12 @@ pub(crate) fn check_derives(
         }
         for (fty, span) in fields {
             if !holds(globals, fty) {
-                diags.error(
+                let d = diags.error(
                     Code::DERIVE_REQUIREMENT,
                     *span,
                     format!("`{name}` requires every field to be `{name}`, but this one is `{fty}`"),
                 );
+                d.label(*span, format!("field type `{fty}` does not implement `{name}`"));
             }
         }
     }

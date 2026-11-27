@@ -565,32 +565,44 @@ impl Parser<'_> {
         self.open(&TokenKind::LBrace, true)?;
         let mut fields = Vec::new();
         let mut base: Option<Box<Expr>> = None;
+        let mut base_span: Option<Span> = None;
         if !self.at(&TokenKind::RBrace) {
             loop {
                 if self.at(&TokenKind::DotDot) {
                     let dots = self.span();
                     self.bump();
                     let value = self.expr()?;
-                    if base.is_some() {
-                        self.diags.error(Code::BASE_REPEATED, dots, "a struct literal may have only one `..base`");
+                    if let Some(first) = base_span {
+                        let d =
+                            self.diags.error(Code::BASE_REPEATED, dots, "a struct literal may have only one `..base`");
+                        d.label(dots, "second `..base` here");
+                        d.label(first, "first `..base` here");
                     } else {
+                        base_span = Some(dots);
                         base = Some(Box::new(value));
                     }
                 } else {
                     let name = self.ident("a field name")?;
                     let value = if self.eat(&TokenKind::Colon) { Some(self.expr()?) } else { None };
-                    if base.is_some() {
-                        self.diags.error(
+                    if let Some(first) = base_span {
+                        let d = self.diags.error(
                             Code::BASE_POSITION,
                             name.span,
                             "`..base` must be the last item of a struct literal",
                         );
+                        d.label(name.span, "field after `..base`");
+                        d.label(first, "`..base` appears here");
                     }
                     fields.push(FieldInit { name, value });
                 }
-                if base.is_some() && self.at(&TokenKind::Comma) && *self.nth_kind(1) == TokenKind::RBrace {
+                if let Some(first) = base_span
+                    && self.at(&TokenKind::Comma)
+                    && *self.nth_kind(1) == TokenKind::RBrace
+                {
                     let comma = self.span();
-                    self.diags.error(Code::BASE_POSITION, comma, "no separator may follow `..base`");
+                    let d = self.diags.error(Code::BASE_POSITION, comma, "no separator may follow `..base`");
+                    d.label(comma, "trailing comma after `..base`");
+                    d.label(first, "`..base` appears here");
                 }
                 if !self.brace_list_sep("field")? {
                     break;

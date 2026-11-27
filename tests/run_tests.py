@@ -331,7 +331,7 @@ def test_run(case: Case, burdin: str, release: bool, timeout: int):
 
 
 def test_compile_fail(case: Case, burdin: str, release: bool, timeout: int, mode: str):
-    command = [burdin, mode, str(case.target)]
+    command = [burdin, mode, str(case.target), "--diagnostic-format=short"]
     if release:
         command.append("--release")
 

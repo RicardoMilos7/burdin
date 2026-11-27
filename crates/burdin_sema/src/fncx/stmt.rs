@@ -21,7 +21,9 @@ impl FnCx<'_> {
                     let init = match &declared {
                         Some(d) => {
                             let init = self.coerce_arg(init, d);
-                            self.expect_ty(init, d)
+                            let origin_msg = format!("expected `{d}` due to this type annotation");
+                            let origin = ty.as_ref().map(|t| (t.span, origin_msg.as_str()));
+                            self.expect_ty_from(init, d, origin)
                         }
                         None => init,
                     };
@@ -43,10 +45,13 @@ impl FnCx<'_> {
                     let pat = self.pattern(pattern, &local_ty, true);
                     let refutable = !self.exhaustive(&local_ty, &[&pat]);
                     if refutable && else_checked.is_none() {
-                        self.diags.error(
-                            Code::NON_EXHAUSTIVE,
+                        self.report_non_exhaustive(
+                            &local_ty,
+                            &[&pat],
                             pattern.span,
                             format!("this pattern does not match every value of `{local_ty}`; add an `else` block"),
+                            0,
+                            false,
                         );
                     } else if !refutable && else_checked.is_some() {
                         self.diags.error(

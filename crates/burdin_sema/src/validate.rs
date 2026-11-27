@@ -232,7 +232,7 @@ pub(crate) fn check_infinite_size(globals: &Globals, src: &AdtSrc, diags: &mut D
                 // Only declared structs are keys (see `keys` above).
                 &src.structs[key.1].as_ref().expect("a declared struct").decl.name
             };
-            diags.error(
+            let d = diags.error(
                 Code::CYCLIC_DECLARATION,
                 name.span,
                 format!(
@@ -240,6 +240,8 @@ pub(crate) fn check_infinite_size(globals: &Globals, src: &AdtSrc, diags: &mut D
                     name.name
                 ),
             );
+            d.label(name.span, "recursive type has infinite size");
+            d.help("wrap the recursive field in `Heap<...>` to give it finite size");
         }
     }
 }

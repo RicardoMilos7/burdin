@@ -106,6 +106,64 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 (ptr, len)
             }
         };
+        if let Ty::Result(_, err_ty) = recv_ty {
+            match err_ty.as_ref() {
+                Ty::Str | Ty::String => {
+                    let err_val = self.builder.build_extract_value(v, 2, "err").map_err(llvm_err)?.into_struct_value();
+                    let ep = self.builder.build_extract_value(err_val, 0, "err.ptr").map_err(llvm_err)?;
+                    let el = self.builder.build_extract_value(err_val, 1, "err.len").map_err(llvm_err)?;
+                    let (file, line, col) = self.location(span);
+                    let call_args = [
+                        ptr.into(),
+                        len.into(),
+                        ep.into(),
+                        el.into(),
+                        file.0.into(),
+                        file.1.into(),
+                        line.into(),
+                        col.into(),
+                    ];
+                    self.builder
+                        .build_call(self.rt.panic_with_str, &call_args, "")
+                        .map_err(llvm_err)?
+                        .set_tail_call_kind(inkwell::llvm_sys::LLVMTailCallKind::LLVMTailCallKindNoTail);
+                    self.builder.build_unreachable().map_err(llvm_err)?;
+                    self.builder.position_at_end(end);
+                    return Ok(Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?));
+                }
+                Ty::Int(ity) if ity.bits() <= 64 => {
+                    let err_val = self.builder.build_extract_value(v, 2, "err").map_err(llvm_err)?.into_int_value();
+                    let i64_ty = self.cx.i64_type();
+                    let val64 = if err_val.get_type().get_bit_width() == 64 {
+                        err_val
+                    } else if ity.signed() {
+                        self.builder.build_int_s_extend(err_val, i64_ty, "").map_err(llvm_err)?
+                    } else {
+                        self.builder.build_int_z_extend(err_val, i64_ty, "").map_err(llvm_err)?
+                    };
+                    let signed = self.cx.bool_type().const_int(u64::from(ity.signed()), false);
+                    let (file, line, col) = self.location(span);
+                    let call_args = [
+                        ptr.into(),
+                        len.into(),
+                        val64.into(),
+                        signed.into(),
+                        file.0.into(),
+                        file.1.into(),
+                        line.into(),
+                        col.into(),
+                    ];
+                    self.builder
+                        .build_call(self.rt.panic_with_int, &call_args, "")
+                        .map_err(llvm_err)?
+                        .set_tail_call_kind(inkwell::llvm_sys::LLVMTailCallKind::LLVMTailCallKindNoTail);
+                    self.builder.build_unreachable().map_err(llvm_err)?;
+                    self.builder.position_at_end(end);
+                    return Ok(Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?));
+                }
+                _ => {}
+            }
+        }
         self.emit_panic(ptr, len, span)?;
         self.builder.position_at_end(end);
         Ok(Some(self.builder.build_load(t, slot, "").map_err(llvm_err)?))

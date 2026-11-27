@@ -293,11 +293,16 @@ impl Globals {
             };
             let iface_name = &self.interfaces[iface].name;
             if !self.interfaces[iface].assoc.iter().any(|n| n == assoc) {
-                diags.error(
+                let avail: Vec<String> = self.interfaces[iface].assoc.iter().map(|n| format!("`{n}`")).collect();
+                let d = diags.error(
                     Code::ASSOC_PROJECTION,
                     name.span,
                     format!("interface `{iface_name}` has no associated type `{assoc}`"),
                 );
+                d.label(name.span, format!("unknown associated type on `{iface_name}`"));
+                if !avail.is_empty() {
+                    d.help(format!("associated types on `{iface_name}`: {}", avail.join(", ")));
+                }
                 return Ty::Error;
             }
             if let Ty::Param(p) = &self_ty {
@@ -453,8 +458,34 @@ impl Globals {
         if let Some(t) = self.named_type(module, name).or_else(|| builtin_type(name)) {
             return t;
         }
-        diags.error(Code::UNKNOWN_NAME, span, format!("unknown type `{name}`"));
+        self.unknown_type_diag(module, name, span, diags);
         Ty::Error
+    }
+
+    fn unknown_type_diag(&self, module: usize, name: &str, span: Span, diags: &mut Diagnostics) {
+        const BUILTIN_TYPE_NAMES: &[&str] = &[
+            "bool", "char", "str", "String", "CString", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32",
+            "u64", "u128", "usize", "f32", "f64", "Option", "Result", "List", "Map", "Heap", "CPtr", "Shared",
+        ];
+        let scope_names =
+            self.modules[module].types.keys().map(String::as_str).chain(BUILTIN_TYPE_NAMES.iter().copied());
+        let candidates = crate::fncx::suggest::closest_names(name, scope_names);
+        let std_provider = self.std_modules.iter().copied().find(|&m| {
+            m != module
+                && self.exported_type(m, name).is_some()
+                && !self.modules[m].type_priv.get(name).copied().unwrap_or(false)
+        });
+        let d = diags.error(Code::UNKNOWN_NAME, span, format!("unknown type `{name}`"));
+        d.label(span, "not found in this scope");
+        if let [only] = candidates.as_slice() {
+            d.suggest_safe(span, format!("use `{only}`, the type in scope with a similar spelling"), only);
+        } else if !candidates.is_empty() {
+            let list: Vec<String> = candidates.iter().map(|n| format!("`{n}`")).collect();
+            d.help(format!("types in scope with a similar spelling: {}", list.join(", ")));
+        } else if let Some(m) = std_provider {
+            let path = format!("{}.{name}", self.module_display(m));
+            d.help(format!("`{name}` is exported by `{}`; add `use {path}`", self.module_display(m)));
+        }
     }
 
     /// One segment of a type path that is qualified by a module: only the names the target module *declares* are
@@ -604,7 +635,7 @@ impl Globals {
             return Ty::Error;
         }
         self.builtin_generic_type(n, args, self_ty, subst, bounds, module, diags).unwrap_or_else(|| {
-            diags.error(Code::UNKNOWN_NAME, name.span, format!("unknown type `{n}`"));
+            self.unknown_type_diag(module, n, name.span, diags);
             Ty::Error
         })
     }

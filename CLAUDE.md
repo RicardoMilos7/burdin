@@ -101,7 +101,9 @@ If these disagree, stop and say so. Do not pick one silently.
 - **Stay inside the current stage.** Stage 0 is complete; stage 1 is the current plan. Do not implement deferred features
   (stage 2 tasks, tooling, ecosystem) early, even when it would be convenient. Reserved words must still be rejected.
 - **Diagnostics are part of the product.** Every error has a code from the registry in `tests/README.md`, a source span, and
-  reports at the line the tests mark. Report every error in a file, not just the first.
+  reports at the line the tests mark. Report every error in a file, not just the first. Follow the diagnostic-writing
+  rules in `AGENTS.md` (label the primary span and every related location so source snippets render cleanly, keep the
+  explanation inline, and attach `Suggestion` edits for concrete fixes).
 - **Keep the checker local.** Memory checks look at one function body at a time, from signatures only. No whole-program
   analysis and no lifetime annotations.
 - **Prefer simple and correct over clever.** This compiler will be read and extended for a long time, so keep it plain

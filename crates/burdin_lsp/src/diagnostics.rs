@@ -92,6 +92,12 @@ pub fn to_json(server: &Server, d: &Diagnostic, index: &LineIndex, paths: &[Stri
         out.set("tags", Json::Arr(vec![Json::from(1)]));
     }
     let mut related = Vec::new();
+    for label in &d.labels {
+        if let Some(p) = paths.get(label.span.file.0 as usize) {
+            let loc = Loc::new(p, label.span.lo, label.span.hi);
+            related.push(Json::obj().with("location", server.location(&loc)).with("message", label.message.as_str()));
+        }
+    }
     for note in &d.notes {
         match note.span.and_then(|s| paths.get(s.file.0 as usize).map(|p| Loc::new(p, s.lo, s.hi))) {
             Some(loc) => {

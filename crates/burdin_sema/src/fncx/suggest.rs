@@ -27,7 +27,7 @@ pub(super) enum NameFix {
 }
 
 /// The edit distance between two names, counted in characters (insert, delete, substitute, and swap two neighbors).
-fn distance(a: &str, b: &str) -> usize {
+pub(crate) fn distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
@@ -52,12 +52,31 @@ fn distance(a: &str, b: &str) -> usize {
 
 /// How far a candidate may be from a name of `len` characters: nothing for one or two characters (any short name
 /// is close to many others), one edit up to five, two from six.
-fn limit(len: usize) -> usize {
+pub(crate) fn limit(len: usize) -> usize {
     match len {
         0..=2 => 0,
         3..=5 => 1,
         _ => 2,
     }
+}
+
+/// Up to three distinct candidate names within edit distance `limit(needle.len())` of `needle`, closest first.
+pub(crate) fn closest_names<'a>(needle: &str, candidates: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let max_dist = limit(needle.len());
+    if max_dist == 0 {
+        return Vec::new();
+    }
+    let mut hits: Vec<(usize, &str)> = candidates
+        .into_iter()
+        .filter(|c| *c != needle)
+        .filter_map(|c| {
+            let d = distance(needle, c);
+            (d > 0 && d <= max_dist).then_some((d, c))
+        })
+        .collect();
+    hits.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    hits.dedup_by(|a, b| a.1 == b.1);
+    hits.into_iter().take(3).map(|(_, c)| c.to_string()).collect()
 }
 
 /// Whether the text before a binding is `let` or `for`, so `mut ` can be written in front of the name.
@@ -199,6 +218,9 @@ impl FnCx<'_> {
             let edit = Edit { span: Span::new(file, at, at), replacement: text };
             return NameFix::Import { path: format!("{module}.{name}"), edit };
         }
+        if let Some((path, edit)) = self.external_import_fix(name) {
+            return NameFix::Import { path, edit };
+        }
         NameFix::None
     }
 
@@ -216,6 +238,146 @@ impl FnCx<'_> {
                 d.suggest_edits(format!("import `{path}`"), vec![edit], Applicability::MachineApplicable);
             }
             NameFix::None => {}
+        }
+    }
+
+    /// If `name` matches an unloaded official package or an exported `std` submodule item, returns an import fix.
+    pub(super) fn external_import_fix(&self, name: &str) -> Option<(String, burdin_diag::Edit)> {
+        let pkg = self.package();
+        let file = self.globals.modules[self.module].file;
+        if self.globals.packages[pkg].official.iter().any(|o| o == name) {
+            let (at, text) = self.import_edit(&format!("use {name}"));
+            return Some((name.to_string(), burdin_diag::Edit { span: Span::new(file, at, at), replacement: text }));
+        }
+        for &m in &self.globals.std_modules {
+            if m == self.module {
+                continue;
+            }
+            let info = &self.globals.modules[m];
+            let exported_public = (self.globals.exported_value(m, name).is_some()
+                && !info.value_priv.get(name).copied().unwrap_or(false))
+                || (self.globals.exported_type(m, name).is_some()
+                    && !info.type_priv.get(name).copied().unwrap_or(false))
+                || (self.globals.exported_iface(m, name).is_some()
+                    && !info.iface_priv.get(name).copied().unwrap_or(false));
+            if exported_public {
+                let mod_name = self.globals.module_display(m);
+                let path = format!("{mod_name}.{name}");
+                let (at, text) = self.import_edit(&format!("use {path}"));
+                return Some((path, burdin_diag::Edit { span: Span::new(file, at, at), replacement: text }));
+            }
+        }
+        None
+    }
+
+    /// When inside a method block with `self`, returns whether `name` is a field or method on `self`'s type.
+    pub(super) fn has_self_member(&self, name: &str, call: bool) -> bool {
+        let Some(id) = self.self_local else { return false };
+        let mut ty = &self.locals[id.0].ty;
+        while let burdin_tir::Ty::Ref { inner, .. } = ty {
+            ty = inner;
+        }
+        if call {
+            crate::globals::adt_key(ty).is_some_and(|key| self.globals.methods.contains_key(&(key, name.to_string())))
+        } else {
+            matches!(ty, burdin_tir::Ty::Struct(a) if self.globals.structs[a.id].fields.iter().any(|f| f.name == name))
+        }
+    }
+
+    /// Attaches a `self.<name>` suggestion when `has_self` is true.
+    pub(super) fn attach_self_member_fix(has_self: bool, name: &str, span: Span, d: &mut Diagnostic) {
+        if has_self {
+            d.suggest_with(
+                span,
+                format!("did you mean `self.{name}`?"),
+                format!("self.{name}"),
+                Applicability::MaybeIncorrect,
+            );
+        }
+    }
+
+    /// Reports an unknown field with primary label, did-you-mean suggestion, and available fields.
+    pub(super) fn report_no_field(&mut self, msg: String, field: &str, span: Span, available: &[&str]) {
+        let candidates = closest_names(field, available.iter().copied());
+        let d = self.diags.error(burdin_diag::Code::UNKNOWN_NAME, span, msg);
+        d.label(span, "unknown field");
+        Self::attach_member_candidates(span, &candidates, available, "available fields", d);
+    }
+
+    /// Reports an unknown variant with primary label, did-you-mean suggestion, and available variants.
+    pub(super) fn report_no_variant(&mut self, msg: String, variant: &str, span: Span, available: &[&str]) {
+        let candidates = closest_names(variant, available.iter().copied());
+        let d = self.diags.error(burdin_diag::Code::UNKNOWN_NAME, span, msg);
+        d.label(span, "unknown variant");
+        Self::attach_member_candidates(span, &candidates, available, "available variants", d);
+    }
+
+    /// Attaches closest member candidates or a short list of available members to `d`.
+    pub(super) fn attach_member_candidates(
+        span: Span,
+        candidates: &[String],
+        available: &[&str],
+        label: &str,
+        d: &mut Diagnostic,
+    ) {
+        if let [only] = candidates {
+            d.suggest_with(span, format!("did you mean `{only}`?"), only, Applicability::MaybeIncorrect);
+        } else if !candidates.is_empty() {
+            let list: Vec<String> = candidates.iter().map(|n| format!("`{n}`")).collect();
+            d.help(format!("did you mean {}?", list.join(", ")));
+        } else if !available.is_empty() && available.len() <= 8 {
+            let list: Vec<String> = available.iter().map(|n| format!("`{n}`")).collect();
+            d.help(format!("{label}: {}", list.join(", ")));
+        }
+    }
+    /// Reports an unknown method with primary label, did-you-mean suggestion, available methods, and `List`/slice hint.
+    pub(super) fn report_no_method(&mut self, recv_ty: &burdin_tir::Ty, name: &str, span: Span) {
+        let mut available: Vec<String> =
+            crate::builtins::builtin_method_names(recv_ty).iter().map(|s| (*s).to_string()).collect();
+        if let Some(key) = crate::globals::adt_key(recv_ty) {
+            for (k, m) in self.globals.methods.keys() {
+                if *k == key && !available.iter().any(|a| a == m) {
+                    available.push(m.clone());
+                }
+            }
+        }
+        for (m, ids) in &self.globals.modules[self.module].extensions {
+            if ids.iter().any(|&id| {
+                let ext = &self.globals.extensions[id];
+                ext.params.is_empty() && crate::types::compatible(recv_ty, &ext.recv)
+            }) && !available.iter().any(|a| a == m)
+            {
+                available.push(m.clone());
+            }
+        }
+        available.sort();
+        let refs: Vec<&str> = available.iter().map(String::as_str).collect();
+        let candidates = closest_names(name, refs.iter().copied());
+        let slice_hint = match recv_ty {
+            burdin_tir::Ty::List(elem, _) => {
+                let slice_ty = burdin_tir::Ty::Slice(elem.clone());
+                let on_slice = crate::builtins::method(name, &slice_ty).is_some()
+                    || self.globals.modules[self.module].extensions.get(name).is_some_and(|ids| {
+                        ids.iter().any(|&id| {
+                            let ext = &self.globals.extensions[id];
+                            ext.params.is_empty() && crate::types::compatible(&slice_ty, &ext.recv)
+                        })
+                    });
+                on_slice.then(|| format!("`List` is not a slice; call `.as_slice().{name}(...)` to use slice methods"))
+            }
+            burdin_tir::Ty::Slice(elem) => {
+                let list_ty = burdin_tir::Ty::List(elem.clone(), burdin_tir::Alloc::Global);
+                crate::builtins::method(name, &list_ty)
+                    .map(|_| format!("slices have fixed length; `{name}` is a method on `List`"))
+            }
+            _ => None,
+        };
+        let d =
+            self.diags.error(burdin_diag::Code::UNKNOWN_NAME, span, format!("no method `{name}` on type `{recv_ty}`"));
+        d.label(span, format!("method not found on `{recv_ty}`"));
+        Self::attach_member_candidates(span, &candidates, &refs, "available methods", d);
+        if let Some(hint) = slice_hint {
+            d.help(hint);
         }
     }
 }

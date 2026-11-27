@@ -212,34 +212,46 @@ impl<'t> Sema<'t> {
         let local_type = type_pkg == package;
         match kind {
             ImplKind::Inherent if !local_type => {
-                diags.error(
+                let d = diags.error(
                     Code::ORPHAN_RULE,
                     imp.span,
                     "inherent methods can only be added to a type declared in this package",
                 );
+                d.label(imp.span, "foreign type");
+                d.help("wrap the foreign type in a local struct to add methods to it");
                 false
             }
             ImplKind::Drop if !local_type => {
-                diags.error(
+                let d = diags.error(
                     Code::ORPHAN_RULE,
                     imp.span,
                     "`Drop` can only be implemented for a type declared in this package",
                 );
+                d.label(imp.span, "foreign type");
                 false
             }
             ImplKind::From | ImplKind::TryFrom if !local_type => {
                 let name = if matches!(kind, ImplKind::From) { "From" } else { "TryFrom" };
-                diags.error(
+                let d = diags.error(
                     Code::ORPHAN_RULE,
                     imp.span,
                     format!("`{name}` can only be implemented for a type declared in this package"),
                 );
+                d.label(imp.span, "foreign type");
                 false
             }
             ImplKind::User(i)
                 if !local_type && self.globals.package_of(self.globals.interfaces[*i].module) != package =>
             {
-                diags.error(Code::ORPHAN_RULE, imp.span, "this package declares neither the type nor the interface");
+                let d = diags.error(
+                    Code::ORPHAN_RULE,
+                    imp.span,
+                    "this package declares neither the type nor the interface",
+                );
+                d.label(imp.span, "orphan implementation");
+                d.help(
+                    "wrap the foreign type in a local struct (newtype pattern) to implement a foreign interface for it",
+                );
                 false
             }
             _ => true,
@@ -779,11 +791,12 @@ impl<'t> Sema<'t> {
             .unwrap_or(Ty::Error);
         let mut named = imp.methods.iter().filter(|m| m.name.name == method);
         let Some(m) = named.next() else {
-            diags.error(
+            let d = diags.error(
                 Code::MISSING_INTERFACE_METHOD,
                 imp.span,
                 format!("this implementation of `{iface}` is missing the method `{method}`"),
             );
+            d.label(imp.span, format!("missing `{method}`"));
             return;
         };
         if let Some(again) = named.next() {
@@ -806,12 +819,14 @@ impl<'t> Sema<'t> {
         // error enum are separate impl blocks, so the duplicate is detected here rather than as a duplicate member:
         // a source written through a qualified path (`std.IoError` and `IoError`) is the same type here but not in
         // the source text the syntax check compares.
-        if self.globals.conversions_into(self_ty, method).iter().any(|c| c.source == source) {
-            diags.error(
+        if let Some(earlier) = self.globals.conversions_into(self_ty, method).iter().find(|c| c.source == source) {
+            let d = diags.error(
                 Code::DUPLICATE_FROM,
                 imp.span,
                 format!("`{self_ty}` already converts from `{source}`; a type converts from each source type once"),
             );
+            d.label(imp.span, format!("duplicate conversion from `{source}`"));
+            d.label(earlier.span, format!("first conversion from `{source}` here"));
             return;
         }
         if self.globals.methods.contains_key(&(key, method.to_string())) {
@@ -954,11 +969,12 @@ pub(crate) fn check_missing_methods(globals: &Globals, imp: &ast::ImplBlock, ifa
     let info = &globals.interfaces[iface];
     for m in info.methods.iter().filter(|m| !m.has_default) {
         if !imp.methods.iter().any(|d| d.name.name == m.name) {
-            diags.error(
+            let d = diags.error(
                 Code::MISSING_INTERFACE_METHOD,
                 imp.span,
                 format!("this implementation of `{}` is missing the method `{}`", info.name, m.name),
             );
+            d.label(imp.span, format!("missing `{}`", m.name));
         }
     }
 }

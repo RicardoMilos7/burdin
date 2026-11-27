@@ -114,9 +114,11 @@ pub(crate) fn check(sigs: &mut [Signature], functions: &mut [tir::Function], dia
             for p in &origin.params {
                 let local = &f.locals[f.params[*p].0];
                 if local.span.lo < local.span.hi {
-                    error.note(local.span, format!("`{}` is one of the sources of this result", local.name));
+                    error.label(local.span, format!("`{}` is one of the sources of this result", local.name));
                 }
             }
+            error
+                .note_without_span("spec/memory-rules.md, RT4: a returned view must derive from at most one parameter");
             error.help(crate::moves::TRACE_HELP);
         }
     }
@@ -245,9 +247,11 @@ impl<'a> Analyzer<'a> {
                 span,
                 "this view borrows from a local or an owned parameter, which does not live past the return",
             );
+            error.label(span, "returns a view that borrows from local data");
             for (span, message) in notes {
-                error.note(span, message);
+                error.label(span, message);
             }
+            error.note_without_span("spec/memory-rules.md, RT5: return an owned value (`String`, `List<T>`, ...) or borrow from a view parameter");
             if temporary {
                 error.note_without_span(
                     "the value comes from a temporary, which is dropped at the end of its statement",
@@ -306,9 +310,11 @@ impl<'a> Analyzer<'a> {
                     "this view borrows from a temporary, which is dropped at the end of this statement"
                 },
             );
+            error.label(span, "view outlives its source");
             for (span, message) in notes {
-                error.note(span, message);
+                error.label(span, message);
             }
+            error.note_without_span("spec/memory-rules.md, RT5: a view cannot outlive the value it borrows from");
             if from_temporary {
                 error.note_without_span("the source is a temporary, dropped at the end of the statement that made it");
             }

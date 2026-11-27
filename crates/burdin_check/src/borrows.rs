@@ -104,14 +104,16 @@ impl<'a> Checker<'a> {
         let created = loan;
         let error =
             self.diags.error(Code::BORROW_CONFLICT, span, "this access conflicts with a borrow that is still live");
+        error.label(span, "conflicting access here");
         if let Some((created, mutable)) = created
             && created != span
         {
-            error.note(
+            error.label(
                 created,
                 if mutable { "the exclusive borrow is created here" } else { "the borrow is created here" },
             );
         }
+        error.note_without_span("spec/memory-rules.md, RF2: a value cannot be accessed while exclusively borrowed, or mutated while borrowed");
         error.help(crate::moves::TRACE_HELP);
     }
 

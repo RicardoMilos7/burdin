@@ -6,7 +6,7 @@ version = 1
 name = "regex"
 version = "0.1.0"
 source = "official"
-checksum = "sha256:e09a0d026fc916d8b80b9e6cae964846882d75480623922240a1a9c24b3a1c31"
+checksum = "sha256:2ae3791e1ba3bd0077282ba0476ad7b72df56638c797b8c4b405bdcc1212e972"
 dependencies = []
 
 [[package]]

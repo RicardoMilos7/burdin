@@ -255,7 +255,26 @@ impl Lexer<'_> {
         let text: String =
             std::str::from_utf8(&self.src[lo..self.pos]).unwrap().chars().filter(|&c| c != '_').collect();
         if bad_tail {
-            self.error(lo, self.pos, format!("invalid number literal `{text}`"));
+            let span = Span::new(self.file, lo as u32, self.pos as u32);
+            let d = self.diags.error(Code::SYNTAX, span, format!("invalid number literal `{text}`"));
+            d.label(span, "invalid number literal");
+            if text.ends_with("i8")
+                || text.ends_with("i16")
+                || text.ends_with("i32")
+                || text.ends_with("i64")
+                || text.ends_with("i128")
+                || text.ends_with("isize")
+                || text.ends_with("u8")
+                || text.ends_with("u16")
+                || text.ends_with("u32")
+                || text.ends_with("u64")
+                || text.ends_with("u128")
+                || text.ends_with("usize")
+                || text.ends_with("f32")
+                || text.ends_with("f64")
+            {
+                d.help("Burdin does not use type suffixes on number literals; use a type annotation (`let x: i32 = ...`) or `as` cast");
+            }
             self.push(TokenKind::Int(0), lo);
             return;
         }

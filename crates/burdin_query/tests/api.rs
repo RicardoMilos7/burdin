@@ -314,3 +314,14 @@ fn position_queries_answer_beside_a_syntax_error() {
     let analysis = db.analyze().unwrap();
     assert!(analysis.program.is_some() && !analysis.is_partial(), "{}", render(&db, &analysis));
 }
+
+#[test]
+fn two_errors_with_one_code_at_one_span_are_both_reported() {
+    let text = "interface Alpha {\n    fn a(self)\n}\n\ninterface Beta {\n    fn b(self)\n}\n\nstruct S {\n    n: i32\n}\n\nfn need<T: Alpha + Beta>(x: T) {}\n\nfn main() {\n    let s = S { n: 1 }\n    need(s)\n}\n";
+    let mut db = standalone(&[("main.bd", text)]);
+    let analysis = db.analyze().unwrap();
+    let e0141: Vec<_> = analysis.diagnostics.iter().filter(|d| d.code.0 == "E0141").collect();
+    assert_eq!(e0141.len(), 2, "expected both unmet bounds at one span: {:#?}", e0141);
+    assert_eq!(e0141[0].span, e0141[1].span);
+    assert_ne!(e0141[0].message, e0141[1].message);
+}

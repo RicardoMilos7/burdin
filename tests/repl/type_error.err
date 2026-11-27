@@ -1,2 +1,12 @@
-main.bd:2:14: error[E0003]: expected `i32`, found `str`
-main.bd:2:1: error[E0002]: unknown name `n`
+error[E0003]: expected `i32`, found `str`
+ --> main.bd:2:14
+  |
+2 | let n: i32 = "not a number"
+  |              ^^^^^^^^^^^^^^
+  |
+error[E0002]: unknown name `n`
+ --> main.bd:2:1
+  |
+2 | n
+  | ^
+  |

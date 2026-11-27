@@ -263,6 +263,9 @@ impl<'t> Sema<'t> {
         let id = FuncId(self.fn_items.len());
         self.globals.sigs.push(Signature::placeholder());
         self.globals.fn_unsafe.push(item.is_unsafe);
+        self.globals.fn_spans.push(item.decl.name.span);
+        self.globals.param_spans.push(item.decl.params.iter().map(|p| p.span).collect());
+        self.globals.ret_spans.push(item.decl.ret.as_ref().map(|r| r.span));
         self.fn_items.push(item);
         id
     }

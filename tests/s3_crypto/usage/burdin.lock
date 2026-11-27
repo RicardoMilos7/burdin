@@ -6,7 +6,7 @@ version = 1
 name = "crypto"
 version = "0.1.0"
 source = "official"
-checksum = "sha256:f2803e04988136a6a42d1d29c1bb4f76623e28862861d51598e7e1b58ae75650"
+checksum = "sha256:4eecdef0ab5890d79195148e2a5e8eef7940f2c54e02c4cc0e1c90d8807cd7ee"
 dependencies = []
 
 [[package]]

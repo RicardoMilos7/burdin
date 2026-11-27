@@ -675,7 +675,8 @@ with harness.temporary_dir("burdin-runner-") as work:
     run_driver(burdin, "test", str(doctests), "--doc", "--filter", "not_compiling", "-j", "4")
     expect_status("doc tests (one example)", 1)
     expect_contains("doc tests (a compile failure's location)", f'at {lib}:33: did not compile ----', out)
-    expect_contains("doc tests (a compile failure's location)", f"{lib}:35:20: error[E0003]", out)
+    expect_contains("doc tests (a compile failure's location)", "error[E0003]", out)
+    expect_contains("doc tests (a compile failure's location)", f"--> {lib}:35:20", out)
     expect_not_contains("doc tests (a compile failure's location)", "doctest-", out)
     # An example that names a code it does not fail with says so in its reason.
     run_driver(burdin, "test", str(doctests), "--doc", "--filter", "wrong_code", "-j", "4")
@@ -760,7 +761,17 @@ with harness.temporary_dir("burdin-runner-") as work:
     # The paths in a diagnostic use the platform's separator; compare with forward slashes everywhere.
     expect_contains(
         "doc tests (json mapped diagnostics)",
-        "src/lib.bd:74:20: error[E0003]",
+        "error[E0003]",
+        failed.get("stderr", "").replace("\\", "/"),
+    )
+    expect_contains(
+        "doc tests (json mapped diagnostics)",
+        "--> ",
+        failed.get("stderr", "").replace("\\", "/"),
+    )
+    expect_contains(
+        "doc tests (json mapped diagnostics)",
+        "src/lib.bd:74:20",
         failed.get("stderr", "").replace("\\", "/"),
     )
     if failed.get("reason") is None:

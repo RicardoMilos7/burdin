@@ -18,7 +18,9 @@ Every behavior below is covered by `tests/check_diagnostics.py` (black-box, with
 ## Formats
 
 **DG1. Four formats, one order.** `--diagnostic-format` is `human` (the default), `short`, `json`, or `sarif`; any other
-value is a usage error (status 2). The human and short formats are exactly what they were before the other two existed.
+value is a usage error (status 2). The `human` format renders multi-line source snippets (`error[CODE]: message`,
+`--> path:line:col`, source lines with gutter and `^`/`-` underlines for labels and spanned notes, multi-line sidebars,
+multi-file headers, and numbered inline diff suggestions); `short` is one plain line (`path:line:col: error[CODE]: message`).
 Whatever the format, the diagnostics are sorted by file, byte offset, code, message, and insertion order, and
 `--error-limit` keeps the first ones of that order, so the output is the same on every run.
 Tests: `check_diagnostics.py` (`unknown diagnostic format`, `determinism`, `ordering`), `burdin_diag` unit tests

@@ -1039,14 +1039,17 @@ impl FnCx<'_> {
             for j in 0..entries.len() {
                 if i != j && entries[i].2.iter().any(|p| entries[j].2.iter().any(|q| places_overlap(p, q))) {
                     let other = entries[j].1;
-                    self.diags
-                        .error(
-                            Code::EXCLUSIVITY,
-                            span,
-                            "another argument of this call touches the same value as a `mut` argument",
-                        )
-                        .note(other, "this argument touches the same place")
-                        .help(EXCLUSIVITY_HELP);
+                    let d = self.diags.error(
+                        Code::EXCLUSIVITY,
+                        span,
+                        "another argument of this call touches the same value as a `mut` argument",
+                    );
+                    d.label(span, "conflicts with another argument");
+                    d.label(other, "this argument touches the same place");
+                    d.note_without_span(
+                        "spec/memory-rules.md, EX1: a `mut` argument requires exclusive access for the call",
+                    );
+                    d.help(EXCLUSIVITY_HELP);
                     return;
                 }
             }
@@ -1473,7 +1476,7 @@ impl FnCx<'_> {
             if let Some(e) = self.extension_call(recv, name, args, span) {
                 return e;
             }
-            self.diags.error(Code::UNKNOWN_NAME, name.span, format!("no method `{}` on type `{recv_ty}`", name.name));
+            self.report_no_method(&recv_ty, &name.name, name.span);
             return self.args_then_error(args, span);
         };
         let ret = self.fallible_method_ret(&m, ret);
@@ -1814,7 +1817,9 @@ impl FnCx<'_> {
                         format!("`{}` is a type, not a function", item.name),
                     );
                 } else {
-                    self.diags.error(Code::UNKNOWN_NAME, item.span, format!("unknown function `{}`", item.name));
+                    let d =
+                        self.diags.error(Code::UNKNOWN_NAME, item.span, format!("unknown function `{}`", item.name));
+                    d.label(item.span, "not found in this module");
                 }
                 self.args_then_error(args, span)
             }

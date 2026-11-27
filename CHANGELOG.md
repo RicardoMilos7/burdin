@@ -6,6 +6,12 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issues #1046–#1067, #902, #287: `cargo`/`gleam`-style compiler diagnostic snippets in `burdin_diag` (primary &
+  secondary labels, multi-line/multi-file snippets, numbered diff suggestions, Unicode/tab width wrapping, OSC 8 links),
+  exact-duplicate filtering in `Diagnostics::absorb` (#902), LSP `relatedInformation` from `labels`, richer diagnostics
+  across syntax/sema/check/const-eval/driver (#1047–#1065), runtime panic operand/payload/snippet/backtrace-hint
+  improvements (#1066), and `tests/diagnostics/human.golden.txt` (#287).
+
 - Issue #779: six style lints for `burdin lint`, all at `warn`: `needless_return` (`L0018`), `bool_comparison`
   (`L0019`), `needless_bool` (`L0020`), `empty_else` (`L0021`), `redundant_parens` (`L0022`), and `let_and_return`
   (`L0023`). They read the syntax tree only, each has a message with a span and a note, and `--fix` applies an edit

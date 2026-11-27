@@ -1,3 +1,8 @@
-<work>/bad/src/main.bd:21:13: error[E0002]: unknown name `missing_name`
+error[E0002]: unknown name `missing_name`
+  --> <work>/bad/src/main.bd:21:13
+   |
+21 |     println(missing_name)
+   |             ^^^^^^^^^^^^
+   |
 error: could not check bad (1 error)
 note: for an explanation of an error code, run `burdin explain <code>`

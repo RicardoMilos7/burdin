@@ -188,3 +188,34 @@ fn a_manifest_that_does_not_load_is_reported_until_it_is_fixed() {
     assert_eq!(codes(&fixed).len(), 2, "the lints of the loaded package: {fixed:?}");
     assert_eq!(client.shutdown(), 0);
 }
+
+#[test]
+fn labels_and_spanned_notes_map_to_lsp_related_information() {
+    let dir = fresh_dir("related");
+    let src = dir.join("related.bd");
+    std::fs::write(
+        &src,
+        "struct Item { id: i32 }\nfn consume(own x: Item) {}\nfn main() {\n    let a = Item { id: 1 }\n    consume(a)\n    let b = a\n}\n",
+    )
+    .unwrap();
+    let mut client = Client::new(&[]);
+    let (uri, text) = client.open(&src);
+    let diagnostics = client.diagnostics(&uri, |p| !p.get("diagnostics").as_array().is_empty());
+    let moved = diagnostics.iter().find(|d| d.get("code").as_str() == Some("E0100")).expect("an E0100 error");
+    let related = moved.get("relatedInformation").as_array();
+    assert!(!related.is_empty(), "expected relatedInformation on E0100: {}", moved.to_text());
+    let first = &related[0];
+    assert_eq!(first.at(&["location", "uri"]).as_str(), Some(uri.as_str()));
+    assert!(!first.get("message").as_str().unwrap_or("").is_empty());
+    let _ = slice(&text, first.at(&["location", "range"]), client.encoding);
+    // Direct unit check on `to_json` for explicit `Diagnostic::label` (#1046).
+    let mut manual = burdin_diag::Diagnostic::new(
+        burdin_diag::Code::TYPE_MISMATCH,
+        burdin_diag::Severity::Error,
+        burdin_diag::Span::new(burdin_diag::FileId(0), 10, 11),
+        "mismatch",
+    );
+    manual.label(burdin_diag::Span::new(burdin_diag::FileId(0), 0, 6), "expected from here");
+    assert_eq!(manual.labels.len(), 1);
+    assert_eq!(client.shutdown(), 0);
+}

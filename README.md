@@ -774,8 +774,8 @@ error code.
 severity, and the code. `auto` is the default and colors only when stderr is a terminal; a non-empty `NO_COLOR`
 disables color for `auto`, while an explicit `always` or `never` wins over it, and the last color option wins.
 `--width <n>` wraps the human format to `n` columns (`0` disables wrapping); without it the driver uses `COLUMNS`,
-then 80. Wrapping only inserts line breaks and indentation, and the first line always keeps the
-`path:LINE:COL: error[E0000]: message` shape.
+then 80. Wrapping keeps source underlines aligned under the right columns, and the first line always keeps the
+`error[E0000]: message` shape (`--diagnostic-format short` prints `path:LINE:COL: error[E0000]: message`).
 
 **Formats.** `--diagnostic-format short` prints exactly one plain line per diagnostic, with no notes,
 suggestions, link, color, or wrapping; it is the stable format the test scripts parse. `--diagnostic-format json`

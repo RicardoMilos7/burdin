@@ -118,10 +118,35 @@ fn has_build_phase(directory: &Path, seen: &mut std::collections::HashSet<PathBu
     false
 }
 
-/// The error diagnostics in the command line's output, as `path:line:col: error[CODE]` lines.
+/// The error diagnostics in the command line's output, from `error[CODE]: ...` + `--> path:line:col` blocks
+/// (or legacy `path:line:col: error[CODE]` lines).
 fn cli_errors(output: &str) -> BTreeSet<DiagnosticKey> {
     let mut errors = BTreeSet::new();
+    let mut pending_code: Option<String> = None;
     for line in output.lines() {
+        if let Some(rest) = line.strip_prefix("error[")
+            && let Some((code, _)) = rest.split_once("]:")
+            && code.len() == 5
+            && code.starts_with('E')
+        {
+            pending_code = Some(code.to_string());
+            continue;
+        }
+        if let Some(code) = pending_code.as_ref()
+            && let Some(place) = line.trim_start().strip_prefix("--> ")
+        {
+            let mut parts = place.rsplitn(3, ':');
+            if let (Some(_col), Some(line_no), Some(path)) = (parts.next(), parts.next(), parts.next())
+                && let Ok(line_no) = line_no.parse::<u32>()
+            {
+                errors.insert((path.to_string(), line_no, code.clone()));
+            }
+            pending_code = None;
+            continue;
+        }
+        if line.starts_with("error:") || line.starts_with("warning") {
+            pending_code = None;
+        }
         let Some(at) = line.find(": error[") else { continue };
         let (place, code) = line.split_at(at);
         let code = code.trim_start_matches(": error[");
@@ -131,9 +156,9 @@ fn cli_errors(output: &str) -> BTreeSet<DiagnosticKey> {
         }
         // The place is `path:line:col`; a path may itself contain colons (a Windows drive).
         let mut parts = place.rsplitn(3, ':');
-        let (Some(_col), Some(line), Some(path)) = (parts.next(), parts.next(), parts.next()) else { continue };
-        let Ok(line) = line.parse::<u32>() else { continue };
-        errors.insert((path.to_string(), line, code.to_string()));
+        let (Some(_col), Some(line_no), Some(path)) = (parts.next(), parts.next(), parts.next()) else { continue };
+        let Ok(line_no) = line_no.parse::<u32>() else { continue };
+        errors.insert((path.to_string(), line_no, code.to_string()));
     }
     errors
 }

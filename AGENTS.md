@@ -109,7 +109,15 @@ same on every host (invoke it with `python3` on Unix and `python` on Windows); t
 - **Stay inside the current stage.** Stage 0 is complete; stage 1 is the current plan. Do not implement stage 2 or
   stage 3 features early. Reserved words stay reserved until their milestone.
 - **Diagnostics are part of the product.** Every error has a registry code, a span, and reports at the line the tests
-  mark. Report every error in a file, not just the first.
+  mark. Report every error in a file, not just the first. Write diagnostics for readability (`cargo`/`gleam` snippet
+  style, `#1046` / `#1067`):
+  - Label the primary span (`label(span, "...")`) with the short phrase that sits under the `^` underline, and label
+    every related location (declarations, moves, active loans, expected-type origins, conflicting items) with a
+    secondary `label` or spanned `note` so the renderer prints its snippet — never write `file:line:col:` in prose.
+  - Keep the core explanation inline (with the spec rule ID when relevant); never send the reader to another command for
+    the one fact that explains the error.
+  - Attach a `Suggestion` (`suggest_safe` when mechanical for `burdin fix`, `suggest_with` otherwise) whenever a concrete
+    edit exists, so the CLI diff and editor quick fixes share it; use `help(...)` for non-edit advice.
 - **Keep the checker local.** Memory checks look at one function body at a time, from signatures only. No whole-program
   analysis and no lifetime annotations.
 - **Prefer simple and correct over clever.** The compiler will be read and extended for a long time.

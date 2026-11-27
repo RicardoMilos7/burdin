@@ -291,10 +291,12 @@ impl FnCx<'_> {
             let index = defs.iter().position(|d| d.name == f.name.name);
             let Some(index) = index.filter(|_| target.is_some()) else {
                 if target.is_some() {
-                    self.diags.error(
-                        Code::UNKNOWN_NAME,
-                        f.name.span,
+                    let available: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+                    self.report_no_field(
                         format!("`{text}` has no field `{}`", f.name.name),
+                        &f.name.name,
+                        f.name.span,
+                        &available,
                     );
                 }
                 self.expr(value, None);
@@ -472,7 +474,10 @@ impl FnCx<'_> {
                     None
                 }
                 None => {
-                    self.diags.error(Code::UNKNOWN_NAME, v.span, format!("unknown variant `{text}`"));
+                    let variants: Vec<String> =
+                        self.globals.enums[a.id].variants.iter().map(|x| x.name.clone()).collect();
+                    let refs: Vec<&str> = variants.iter().map(String::as_str).collect();
+                    self.report_no_variant(format!("unknown variant `{text}`"), &v.name, v.span, &refs);
                     None
                 }
             },
@@ -603,7 +608,12 @@ impl FnCx<'_> {
                 );
             }
             other => {
-                self.diags.error(Code::TYPE_MISMATCH, span, format!("cannot index into a value of type `{other}`"));
+                let is_map = matches!(&other, Ty::Map(..));
+                let d =
+                    self.diags.error(Code::TYPE_MISMATCH, span, format!("cannot index into a value of type `{other}`"));
+                if is_map {
+                    d.help("`Map` does not implement `Index`; use `.get(key)` or `.get_mut(key)`");
+                }
             }
         }
         error_expr(span)

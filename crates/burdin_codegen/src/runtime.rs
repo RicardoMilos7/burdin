@@ -190,6 +190,14 @@ pub(crate) struct Runtime<'ctx> {
     pub in_next: FunctionValue<'ctx>,
     /// `(msg, msg_len: usize, file, file_len: usize, line: i32, col: i32)`, never returns.
     pub panic: FunctionValue<'ctx>,
+    /// `(msg, msg_len: usize, snip, snip_len: usize, file, file_len: usize, line: i32, col: i32)`, never returns.
+    pub panic_ctx: FunctionValue<'ctx>,
+    /// `(prefix, prefix_len, extra, extra_len, file, file_len, line, col)`, never returns.
+    pub panic_with_str: FunctionValue<'ctx>,
+    /// `(prefix, prefix_len, val: i64, signed: i1, file, file_len, line, col)`, never returns.
+    pub panic_with_int: FunctionValue<'ctx>,
+    /// `(verb, verb_len, lhs: i64, rhs: i64, signed: i1, binary: i1, file, file_len, line, col)`, never returns.
+    pub panic_overflow: FunctionValue<'ctx>,
     /// `(index: i64, len: i64, file, file_len: usize, line: i32, col: i32)`, never returns.
     pub panic_bounds: FunctionValue<'ctx>,
     /// `(ptr, cap: usize)`
@@ -1360,6 +1368,10 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
             in_error: self.in_error(in_error_ptr)?,
             in_next: self.in_next()?,
             panic: self.panic(&h)?,
+            panic_ctx: self.panic_ctx(&h)?,
+            panic_with_str: self.panic_with_str(&h)?,
+            panic_with_int: self.panic_with_int(&h)?,
+            panic_overflow: self.panic_overflow(&h)?,
             panic_bounds: self.panic_bounds(&h)?,
             string_free: self.string_free()?,
             string_new: self.string_new()?,
@@ -2420,7 +2432,157 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         Ok(f)
     }
 
-    /// `panic_bounds(index: i64, len: i64, file, file_len: usize, line: i32, col: i32)`
+    /// `panic_ctx(msg, msg_len: usize, snip, snip_len: usize, file, file_len: usize, line: i32, col: i32)`
+    fn panic_ctx(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let params = [
+            &[self.ptr_ty.into(), self.usize_ty.into(), self.ptr_ty.into(), self.usize_ty.into()][..],
+            &self.location_params()[..],
+        ]
+        .concat();
+        let f = self.function("burdin_rt_panic_ctx", self.cx.void_type().fn_type(&params, false));
+        self.mark_noreturn(f);
+        self.call(h.panic_begin, &[])?;
+        let loc_args: Vec<BasicMetadataValueEnum<'ctx>> =
+            (4..8).map(|i| f.get_nth_param(i).expect("panic_ctx has 8 params").into()).collect();
+        self.call(h.panic_start, &loc_args)?;
+        let stderr = self.i32().const_int(2, false);
+        self.call(h.write_all, &[stderr.into(), Self::ptr_param(f, 0).into(), Self::int_param(f, 1).into()])?;
+        self.write_const(h.write_all, 2, b"\n")?;
+        let snip_len = Self::int_param(f, 3);
+        let has_snip =
+            self.b.build_int_compare(IntPredicate::NE, snip_len, self.usize_ty.const_zero(), "").map_err(llvm_err)?;
+        let show = self.block(f, "show.snip");
+        let after = self.block(f, "after.snip");
+        self.b.build_conditional_branch(has_snip, show, after).map_err(llvm_err)?;
+        self.b.position_at_end(show);
+        self.call(h.write_all, &[stderr.into(), Self::ptr_param(f, 2).into(), snip_len.into()])?;
+        self.b.build_unconditional_branch(after).map_err(llvm_err)?;
+        self.b.position_at_end(after);
+        self.call(h.print_backtrace, &[])?;
+        self.call(h.die, &[])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `panic_with_str(prefix, prefix_len, extra, extra_len, file, file_len, line, col)`
+    fn panic_with_str(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let params = [
+            &[self.ptr_ty.into(), self.usize_ty.into(), self.ptr_ty.into(), self.usize_ty.into()][..],
+            &self.location_params()[..],
+        ]
+        .concat();
+        let f = self.function("burdin_rt_panic_with_str", self.cx.void_type().fn_type(&params, false));
+        self.mark_noreturn(f);
+        self.call(h.panic_begin, &[])?;
+        let loc_args: Vec<BasicMetadataValueEnum<'ctx>> =
+            (4..8).map(|i| f.get_nth_param(i).expect("8 params").into()).collect();
+        self.call(h.panic_start, &loc_args)?;
+        let stderr = self.i32().const_int(2, false);
+        self.call(h.write_all, &[stderr.into(), Self::ptr_param(f, 0).into(), Self::int_param(f, 1).into()])?;
+        self.write_const(h.write_all, 2, b": ")?;
+        self.call(h.write_all, &[stderr.into(), Self::ptr_param(f, 2).into(), Self::int_param(f, 3).into()])?;
+        self.write_const(h.write_all, 2, b"\n")?;
+        self.call(h.print_backtrace, &[])?;
+        self.call(h.die, &[])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// Writes `val: i64` to stderr (signed when `signed` is true).
+    fn write_int64(
+        &mut self,
+        h: &Helpers<'ctx>,
+        f: FunctionValue<'ctx>,
+        val: IntValue<'ctx>,
+        signed: IntValue<'ctx>,
+        tag: &str,
+    ) -> GenResult<()> {
+        let stderr = self.i32().const_int(2, false);
+        let zero = self.i64().const_zero();
+        let is_neg = self.b.build_int_compare(IntPredicate::SLT, val, zero, "").map_err(llvm_err)?;
+        let neg = self.b.build_and(signed, is_neg, "").map_err(llvm_err)?;
+        let neg_bb = self.block(f, &format!("{tag}.neg"));
+        let pos_bb = self.block(f, &format!("{tag}.pos"));
+        let done_bb = self.block(f, &format!("{tag}.done"));
+        self.b.build_conditional_branch(neg, neg_bb, pos_bb).map_err(llvm_err)?;
+        self.b.position_at_end(neg_bb);
+        self.write_const(h.write_all, 2, b"-")?;
+        let mag = self.b.build_int_sub(zero, val, "").map_err(llvm_err)?;
+        self.call(h.write_u64, &[stderr.into(), mag.into()])?;
+        self.b.build_unconditional_branch(done_bb).map_err(llvm_err)?;
+        self.b.position_at_end(pos_bb);
+        self.call(h.write_u64, &[stderr.into(), val.into()])?;
+        self.b.build_unconditional_branch(done_bb).map_err(llvm_err)?;
+        self.b.position_at_end(done_bb);
+        Ok(())
+    }
+
+    /// `panic_with_int(prefix, prefix_len, val: i64, signed: i1, file, file_len, line, col)`
+    fn panic_with_int(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let params = [
+            &[self.ptr_ty.into(), self.usize_ty.into(), self.i64().into(), self.cx.bool_type().into()][..],
+            &self.location_params()[..],
+        ]
+        .concat();
+        let f = self.function("burdin_rt_panic_with_int", self.cx.void_type().fn_type(&params, false));
+        self.mark_noreturn(f);
+        self.call(h.panic_begin, &[])?;
+        let loc_args: Vec<BasicMetadataValueEnum<'ctx>> =
+            (4..8).map(|i| f.get_nth_param(i).expect("8 params").into()).collect();
+        self.call(h.panic_start, &loc_args)?;
+        let stderr = self.i32().const_int(2, false);
+        self.call(h.write_all, &[stderr.into(), Self::ptr_param(f, 0).into(), Self::int_param(f, 1).into()])?;
+        self.write_const(h.write_all, 2, b": ")?;
+        self.write_int64(h, f, Self::int_param(f, 2), Self::int_param(f, 3), "int")?;
+        self.write_const(h.write_all, 2, b"\n")?;
+        self.call(h.print_backtrace, &[])?;
+        self.call(h.die, &[])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+        Ok(f)
+    }
+
+    /// `panic_overflow(verb, verb_len, lhs: i64, rhs: i64, signed: i1, binary: i1, file, file_len, line, col)`
+    fn panic_overflow(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
+        let i1_ty = self.cx.bool_type();
+        let params = [
+            &[
+                self.ptr_ty.into(),
+                self.usize_ty.into(),
+                self.i64().into(),
+                self.i64().into(),
+                i1_ty.into(),
+                i1_ty.into(),
+            ][..],
+            &self.location_params()[..],
+        ]
+        .concat();
+        let f = self.function("burdin_rt_panic_overflow", self.cx.void_type().fn_type(&params, false));
+        self.mark_noreturn(f);
+        self.call(h.panic_begin, &[])?;
+        let loc_args: Vec<BasicMetadataValueEnum<'ctx>> =
+            (6..10).map(|i| f.get_nth_param(i).expect("10 params").into()).collect();
+        self.call(h.panic_start, &loc_args)?;
+        self.write_const(h.write_all, 2, b"attempt to ")?;
+        let stderr = self.i32().const_int(2, false);
+        self.call(h.write_all, &[stderr.into(), Self::ptr_param(f, 0).into(), Self::int_param(f, 1).into()])?;
+        self.write_const(h.write_all, 2, b" with overflow: ")?;
+        let signed = Self::int_param(f, 4);
+        self.write_int64(h, f, Self::int_param(f, 2), signed, "lhs")?;
+        let bin = Self::int_param(f, 5);
+        let rhs_bb = self.block(f, "ovf.rhs");
+        let end_bb = self.block(f, "ovf.end");
+        self.b.build_conditional_branch(bin, rhs_bb, end_bb).map_err(llvm_err)?;
+        self.b.position_at_end(rhs_bb);
+        self.write_const(h.write_all, 2, b", ")?;
+        self.write_int64(h, f, Self::int_param(f, 3), signed, "rhs")?;
+        self.b.build_unconditional_branch(end_bb).map_err(llvm_err)?;
+        self.b.position_at_end(end_bb);
+        self.write_const(h.write_all, 2, b"\n")?;
+        self.call(h.print_backtrace, &[])?;
+        self.call(h.die, &[])?;
+        self.b.build_unreachable().map_err(llvm_err)?;
+        Ok(f)
+    }
     fn panic_bounds(&mut self, h: &Helpers<'ctx>) -> GenResult<FunctionValue<'ctx>> {
         let params = [&[self.i64().into(), self.i64().into()][..], &self.location_params()[..]].concat();
         let f = self.function("burdin_rt_panic_bounds", self.cx.void_type().fn_type(&params, false));
@@ -2613,6 +2775,7 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let start = unsafe { self.b.build_in_bounds_gep(ptr_ty, buf, &[hidden], "start") }.map_err(llvm_err)?;
         let count = self.b.build_int_sub(n, hidden, "count").map_err(llvm_err)?;
         self.call(symbols, &[start.into(), count.into(), i32_ty.const_int(2, false).into()])?;
+        self.write_const(write_all, 2, b"  note: rebuild with `-g` for a symbolized backtrace\n")?;
         self.b.build_unconditional_branch(done).map_err(llvm_err)?;
         self.b.position_at_end(done);
         self.b.build_return(None).map_err(llvm_err)?;
@@ -2655,6 +2818,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         self.b.build_conditional_branch(enough, show, done).map_err(llvm_err)?;
         self.b.position_at_end(show);
         self.write_const(write_all, 2, b"stack backtrace:\n")?;
+        let frame0 = self.b.build_load(ptr_ty, buf, "").map_err(llvm_err)?.into_pointer_value();
+        let addr0 = self.b.build_ptr_to_int(frame0, i64_ty, "").map_err(llvm_err)?;
+        let info0 = self.call(frame_info, &[addr0.into()])?.expect("the lookup returns an entry pointer");
+        let info0_i = self.b.build_ptr_to_int(info0.into_pointer_value(), i64_ty, "").map_err(llvm_err)?;
+        let raw_trace =
+            self.b.build_int_compare(IntPredicate::EQ, info0_i, i64_ty.const_zero(), "").map_err(llvm_err)?;
         // Without `-g` the lookup answers `null` and every frame falls to its raw address, which is the stage 0
         // Windows trace; there is nothing else to preserve.
         let zero = i32_ty.const_zero();
@@ -2663,11 +2832,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let header = self.block(f, "frame.header");
         let body = self.block(f, "frame.body");
         let latch = self.block(f, "frame.next");
+        let hint_bb = self.block(f, "frame.hint");
         self.b.build_unconditional_branch(header).map_err(llvm_err)?;
         self.b.position_at_end(header);
         let i = self.b.build_load(i32_ty, index, "i").map_err(llvm_err)?.into_int_value();
         let more = self.b.build_int_compare(IntPredicate::SLT, i, n, "").map_err(llvm_err)?;
-        self.b.build_conditional_branch(more, body, done).map_err(llvm_err)?;
+        self.b.build_conditional_branch(more, body, hint_bb).map_err(llvm_err)?;
         self.b.position_at_end(body);
         let frame = unsafe { self.b.build_in_bounds_gep(ptr_ty, buf, &[i], "frame") }.map_err(llvm_err)?;
         let frame = self.b.build_load(ptr_ty, frame, "").map_err(llvm_err)?.into_pointer_value();
@@ -2678,6 +2848,12 @@ impl<'ctx, 'a> Gen<'ctx, 'a> {
         let next = self.b.build_int_add(i, i32_ty.const_int(1, false), "").map_err(llvm_err)?;
         self.b.build_store(index, next).map_err(llvm_err)?;
         self.b.build_unconditional_branch(header).map_err(llvm_err)?;
+        self.b.position_at_end(hint_bb);
+        let hint_msg = self.block(f, "frame.hint.msg");
+        self.b.build_conditional_branch(raw_trace, hint_msg, done).map_err(llvm_err)?;
+        self.b.position_at_end(hint_msg);
+        self.write_const(write_all, 2, b"  note: rebuild with `-g` for a symbolized backtrace\n")?;
+        self.b.build_unconditional_branch(done).map_err(llvm_err)?;
         self.b.position_at_end(done);
         self.b.build_return(None).map_err(llvm_err)?;
         Ok(())

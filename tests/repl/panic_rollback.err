@@ -1,2 +1,7 @@
-main.bd:3:1: error[E0222]: boom
+error[E0222]: boom
+ --> main.bd:3:1
+  |
+3 | panic("boom")
+  | ^^^^^^^^^^^^^
+  |
   = note: the input was discarded and the session is unchanged

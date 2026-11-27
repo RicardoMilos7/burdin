@@ -366,6 +366,7 @@ impl<'a> Checker<'a> {
                         && self.env.defs.is_clone(&self.locals[root.0].ty)
                 });
                 let error = self.error(Code::MOVED, span, format!("use of moved value `{name}`"));
+                error.label(span, "value used here after move");
                 if declared.lo < declared.hi && declared != span {
                     error.note(declared, format!("`{name}` is declared here"));
                 }
@@ -380,24 +381,31 @@ impl<'a> Checker<'a> {
                         burdin_diag::Applicability::MaybeIncorrect,
                     );
                 }
+                error.note_without_span("spec/memory-rules.md, MV1: moving a non-Copy value transfers ownership");
                 error.help(TRACE_HELP);
             }
             Status::Maybe => {
                 let name = name.clone();
                 let declared = self.locals[root.0].span;
                 let error = self.error(Code::MOVED, span, format!("use of possibly moved value `{name}`"));
+                error.label(span, "value used here");
                 if declared.lo < declared.hi && declared != span {
                     error.note(declared, format!("`{name}` is declared here"));
                 }
+                error.note_without_span("spec/memory-rules.md, MV1: value may have been moved on an earlier branch");
                 error.help(TRACE_HELP);
             }
             Status::Init if partial => {
                 let name = name.clone();
                 let declared = self.locals[root.0].span;
                 let error = self.error(Code::MOVED, span, format!("use of partially moved value `{name}`"));
+                error.label(span, "value used here");
                 if declared.lo < declared.hi && declared != span {
                     error.note(declared, format!("`{name}` is declared here"));
                 }
+                error.note_without_span(
+                    "spec/memory-rules.md, MV5: one or more fields of this value were already moved",
+                );
                 error.help(TRACE_HELP);
             }
             Status::Init => {}

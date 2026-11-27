@@ -240,12 +240,7 @@ impl Db {
             last: RevisionStats::default(),
             revision: 0,
         };
-        // Only a package on disk has a manifest to declare an official package in.
-        let official = if workspace.packages.iter().any(|package| package.dir.is_some()) {
-            package::official_names()
-        } else {
-            Vec::new()
-        };
+        let official = package::official_names();
         for package in &workspace.packages {
             let mut modules = Vec::new();
             for module in &package.modules {
@@ -263,14 +258,11 @@ impl Db {
                 dir: package.dir.clone(),
                 deps: package.deps.clone(),
                 root_module: package.root_module,
-                official: match package.dir {
-                    Some(_) => official
-                        .iter()
-                        .filter(|name| !package.deps.iter().any(|(dep, _)| dep == *name))
-                        .cloned()
-                        .collect(),
-                    None => Vec::new(),
-                },
+                official: official
+                    .iter()
+                    .filter(|name| !package.deps.iter().any(|(dep, _)| dep == *name))
+                    .cloned()
+                    .collect(),
                 edition: package.edition,
                 modules,
             });

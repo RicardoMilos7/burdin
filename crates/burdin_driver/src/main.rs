@@ -1808,6 +1808,25 @@ fn report_build_failure(loaded: &package::Workspace, failure: build::Failure, op
     let file = sources.add(source_path_text(&entry.file), text);
     let mut diags = Diagnostics::default();
     let diagnostic = diags.error(failure.code, Span::new(file, 0, 0), failure.message);
+    if let Some(manifest) = failure.manifest
+        && let Ok(toml_text) = std::fs::read_to_string(&manifest.0)
+    {
+        let (toml_path, line, label) = *manifest;
+        let mut offset = 0usize;
+        let mut span_range = (0usize, 0usize);
+        for (i, raw_line) in toml_text.split_inclusive('\n').enumerate() {
+            if i + 1 == line {
+                let trimmed = raw_line.trim_end_matches(&['\r', '\n'][..]);
+                let lead = trimmed.len() - trimmed.trim_start().len();
+                span_range = (offset + lead, offset + trimmed.len());
+                break;
+            }
+            offset += raw_line.len();
+        }
+        let toml_file = sources.add(source_path_text(&toml_path), toml_text);
+        let toml_span = Span::new(toml_file, span_range.0 as u32, span_range.1 as u32);
+        diagnostic.note(toml_span, label);
+    }
     if let Some(note) = failure.note {
         diagnostic.note_without_span(note);
     }

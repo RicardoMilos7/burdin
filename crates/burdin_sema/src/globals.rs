@@ -216,6 +216,10 @@ pub(crate) struct Globals {
     pub(crate) const_names: Vec<String>,
     /// Whether each function is `unsafe` (`unsafe fn`), by function index.
     pub(crate) fn_unsafe: Vec<bool>,
+    /// Declaration name span, parameter spans, and return-type span for each function, for diagnostics.
+    pub(crate) fn_spans: Vec<Span>,
+    pub(crate) param_spans: Vec<Vec<Span>>,
+    pub(crate) ret_spans: Vec<Option<Span>>,
     // Interfaces and generics (see `generics.rs`).
     pub(crate) interfaces: Vec<InterfaceInfo>,
     pub(crate) generic_adts: Vec<GenericAdt>,

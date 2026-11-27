@@ -26,17 +26,36 @@ pub(crate) struct Failure {
     pub(crate) code: Code,
     pub(crate) message: String,
     pub(crate) note: Option<String>,
+    /// Optional `(toml_path, 1_based_line, label)` to show the offending `burdin.toml` entry.
+    pub(crate) manifest: Option<Box<(std::path::PathBuf, usize, String)>>,
 }
 
 impl Failure {
     pub(crate) fn new(code: Code, message: impl Into<String>) -> Failure {
-        Failure { code, message: message.into(), note: None }
+        Failure { code, message: message.into(), note: None, manifest: None }
     }
 
     pub(crate) fn with_note(mut self, note: impl Into<String>) -> Failure {
         self.note = Some(note.into());
         self
     }
+
+    pub(crate) fn with_manifest(mut self, path: std::path::PathBuf, line: usize, label: impl Into<String>) -> Failure {
+        self.manifest = Some(Box::new((path, line, label.into())));
+        self
+    }
+}
+
+/// 1-based line number of the first line in `burdin.toml` matching any needle, or 1.
+pub(crate) fn manifest_line(dir: &Path, needles: &[&str]) -> Option<(std::path::PathBuf, usize)> {
+    let path = dir.join("burdin.toml");
+    let text = std::fs::read_to_string(&path).ok()?;
+    for needle in needles {
+        if let Some((i, _)) = text.lines().enumerate().find(|(_, line)| line.contains(needle)) {
+            return Some((path, i + 1));
+        }
+    }
+    Some((path, 1))
 }
 
 /// What running the build steps added to the build.
@@ -115,14 +134,17 @@ fn check_grants(workspace: &Workspace) -> Result<(), Failure> {
         }
         if !entry.build_allow.contains(&package.name) {
             let what = if has_script(package) { "build script" } else { "Rust crates" };
-            return Err(Failure::new(
+            let mut err = Failure::new(
                 Code::BUILD_CONFIG,
                 format!("the {what} of dependency `{}` is not allowed by this package's manifest", package.name),
             )
-            .with_note(format!(
-                "add `{}` to `[build] allow = [\"...\"]` in the package's `burdin.toml`",
-                package.name
-            )));
+            .with_note(format!("add `{}` to `[build] allow = [\"...\"]` in the package's `burdin.toml`", package.name));
+            if let Some(dir) = &entry.dir
+                && let Some((path, line)) = manifest_line(dir, &["allow", "[build]", &package.name])
+            {
+                err = err.with_manifest(path, line, "manifest does not allow this dependency's build step");
+            }
+            return Err(err);
         }
     }
     for name in &entry.build_allow {
@@ -136,10 +158,16 @@ fn check_grants(workspace: &Workspace) -> Result<(), Failure> {
             .enumerate()
             .any(|(index, package)| index != workspace.entry_package && &package.name == name);
         if !known {
-            return Err(Failure::new(
+            let mut err = Failure::new(
                 Code::BUILD_CONFIG,
                 format!("`[build] allow` names `{name}`, but no dependency of that name is in this build"),
-            ));
+            );
+            if let Some(dir) = &entry.dir
+                && let Some((path, line)) = manifest_line(dir, &[name, "allow", "[build]"])
+            {
+                err = err.with_manifest(path, line, format!("`{name}` is not a dependency of this package"));
+            }
+            return Err(err);
         }
     }
     Ok(())

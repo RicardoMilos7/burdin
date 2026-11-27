@@ -29,14 +29,106 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         span: Span,
     ) -> GenResult<()> {
         let (file, line, col) = self.location(span);
-        let args = [msg_ptr.into(), msg_len.into(), file.0.into(), file.1.into(), line.into(), col.into()];
+        let snip_text = if self.debug_assertions { self.panic_snippet(span) } else { String::new() };
+        let snip = self.str_literal(snip_text.as_bytes());
+        let snip_ptr = snip.get_field_at_index(0).expect("str has a pointer");
+        let snip_len = snip.get_field_at_index(1).expect("str has a length");
+        let args = [
+            msg_ptr.into(),
+            msg_len.into(),
+            snip_ptr.into(),
+            snip_len.into(),
+            file.0.into(),
+            file.1.into(),
+            line.into(),
+            col.into(),
+        ];
         // `notail`: a tail call would erase the panicking function's frame from the backtrace, and the panic
         // function never returns, so LLVM would otherwise make it a jump.
         self.builder
-            .build_call(self.rt.panic, &args, "")
+            .build_call(self.rt.panic_ctx, &args, "")
             .map_err(llvm_err)?
             .set_tail_call_kind(LLVMTailCallKind::LLVMTailCallKindNoTail);
         self.builder.build_unreachable().map_err(llvm_err)?;
+        Ok(())
+    }
+
+    fn panic_snippet(&self, span: Span) -> String {
+        if span.lo >= span.hi {
+            return String::new();
+        }
+        let sf = self.sources.get(span.file);
+        let (line_no, col_no) = sf.line_col(span.lo);
+        let Some(src_line) = sf.text.lines().nth(line_no.saturating_sub(1) as usize) else {
+            return String::new();
+        };
+        if src_line.trim().is_empty() || src_line.len() > 200 {
+            return String::new();
+        }
+        let num = line_no.to_string();
+        let gutter = " ".repeat(num.len());
+        let caret_pad = " ".repeat(col_no.saturating_sub(1) as usize);
+        let width = ((span.hi - span.lo) as usize)
+            .clamp(1, src_line.len().saturating_sub(col_no.saturating_sub(1) as usize).max(1));
+        let carets = "^".repeat(width.min(40));
+        format!("{gutter} |\n{num} | {src_line}\n{gutter} | {caret_pad}{carets}\n")
+    }
+
+    /// Guards an integer operation and panics with `verb` and operand values on overflow.
+    pub(super) fn check_overflow(
+        &mut self,
+        ok: IntValue<'ctx>,
+        verb: &str,
+        lhs: IntValue<'ctx>,
+        rhs: Option<IntValue<'ctx>>,
+        signed: bool,
+        span: Span,
+    ) -> GenResult<()> {
+        if lhs.get_type().get_bit_width() > 64 {
+            return self.check(ok, &format!("attempt to {verb} with overflow"), span);
+        }
+        let fail = self.new_block("ovf.fail");
+        let cont = self.new_block("ovf.ok");
+        self.builder.build_conditional_branch(ok, cont, fail).map_err(llvm_err)?;
+        self.builder.position_at_end(fail);
+        let i64_ty = self.cx.i64_type();
+        let i1_ty = self.cx.bool_type();
+        let to_i64 = |v: IntValue<'ctx>| -> GenResult<IntValue<'ctx>> {
+            if v.get_type().get_bit_width() == 64 {
+                Ok(v)
+            } else if signed {
+                self.builder.build_int_s_extend(v, i64_ty, "").map_err(llvm_err)
+            } else {
+                self.builder.build_int_z_extend(v, i64_ty, "").map_err(llvm_err)
+            }
+        };
+        let lhs64 = to_i64(lhs)?;
+        let (rhs64, binary) = match rhs {
+            Some(r) => (to_i64(r)?, i1_ty.const_int(1, false)),
+            None => (i64_ty.const_zero(), i1_ty.const_zero()),
+        };
+        let v = self.str_literal(verb.as_bytes());
+        let vp = v.get_field_at_index(0).expect("str ptr");
+        let vl = v.get_field_at_index(1).expect("str len");
+        let (file, line, col) = self.location(span);
+        let args = [
+            vp.into(),
+            vl.into(),
+            lhs64.into(),
+            rhs64.into(),
+            i1_ty.const_int(u64::from(signed), false).into(),
+            binary.into(),
+            file.0.into(),
+            file.1.into(),
+            line.into(),
+            col.into(),
+        ];
+        self.builder
+            .build_call(self.rt.panic_overflow, &args, "")
+            .map_err(llvm_err)?
+            .set_tail_call_kind(LLVMTailCallKind::LLVMTailCallKindNoTail);
+        self.builder.build_unreachable().map_err(llvm_err)?;
+        self.builder.position_at_end(cont);
         Ok(())
     }
 
