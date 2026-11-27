@@ -891,7 +891,7 @@ fn array_and_slice_methods_answer_hover_definition_and_signature_help() {
     assert_eq!(s.client.shutdown(), 0);
 }
 
-/// Ranges, tuples, `Chars`, and the result of `iter()` complete too (issue #1039; `spec/lsp.md`, LS12): the members the
+/// Ranges, tuples, `chars()`, and the result of `iter()` complete too (issue #1039; `spec/lsp.md`, LS12): the members the
 /// compiler gives them without a declaration, and the `Iterator` adapters on its own iterators.
 #[test]
 fn ranges_tuples_and_iterators_have_members() {
@@ -899,8 +899,8 @@ fn ranges_tuples_and_iterators_have_members() {
         // A range clones, compares, and gives its iterator; it is not an iterator (`r.map(...)` is E0002).
         ("r", &["clone", "cmp", "iter", "into_iter"], &["map", "filter", "contains"]),
         ("t", &["clone", "cmp"], &["iter", "map"]),
-        // `Chars` is an iterator: the adapters, and `next_back`.
-        ("ch", &["map", "count", "filter", "next_back", "enumerate"], &["len", "iter"]),
+        // `chars()` is a `List<char>`: the list methods, and no iterator adapters.
+        ("ch", &["len", "iter", "push", "into_iter"], &["map", "next_back"]),
         // `[1, 2].iter()` is a slice, an iterator too.
         ("it", &["map", "fold", "first", "len", "contains"], &["iter_mut", "clone"]),
         ("unit", &[], &["clone", "map"]),
