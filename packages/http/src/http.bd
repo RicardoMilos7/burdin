@@ -168,7 +168,7 @@ priv fn __is_token(text: str): bool {
 /// `Transfer-Encoding: gzip, chunked` are read.
 priv fn __has_list_token(text: str, token: str): bool {
     for piece in text.split_char(',') {
-        if piece.as_str().trim().eq_ignore_ascii_case(token) {
+        if piece.trim().eq_ignore_ascii_case(token) {
             return true
         }
     }
@@ -641,7 +641,7 @@ priv fn __without_fragment(text: str): str {
 
 /// RFC 3986, 5.2.4: the path with its `.` and `..` segments resolved. The path starts with `/`.
 priv fn __remove_dot_segments(path: str): String {
-    let segments = path.split_char('/')
+    let segments: List<String> = path.split_char('/').collect()
     let mut out = List<String>.new()
     let last = segments.len() - 1
     let mut i: usize = 0
@@ -1153,7 +1153,7 @@ fn parse_response_head(head: [u8]): Result<ResponseHead, HttpError> {
         Result.Ok(t) => t,
         Result.Err(_) => return Result.Err(__bad_response("the head is not valid UTF-8")),
     }
-    let lines = text.split("\r\n")
+    let lines: List<String> = text.split("\r\n").collect()
     // The text ends in CRLF CRLF, so the last two pieces are empty.
     if lines.len() < 3 {
         return Result.Err(__bad_response("the head is incomplete"))
@@ -1284,8 +1284,7 @@ fn framing_of(method: Method, status: u16, headers: Headers): Result<Framing, Ht
             return Result.Err(__bad_response("the response has both Content-Length and Transfer-Encoding"))
         }
         let all = codings.join(",")
-        let pieces = all.as_str().split_char(',')
-        let last = pieces[pieces.len() - 1].as_str().trim()
+        let last = all.as_str().rsplit_char(',').next().unwrap().trim()
         if !last.eq_ignore_ascii_case("chunked") {
             return Result.Err(__bad_response("the Transfer-Encoding does not end in chunked"))
         }
@@ -1298,7 +1297,7 @@ fn framing_of(method: Method, status: u16, headers: Headers): Result<Framing, Ht
     let mut agreed: Option<u64> = Option.None
     for field in lengths.iter() {
         for piece in field.as_str().split_char(',') {
-            let n = __parse_length(piece.as_str().trim())?
+            let n = __parse_length(piece.trim())?
             match agreed {
                 Option.Some(first) => {
                     if first != n {

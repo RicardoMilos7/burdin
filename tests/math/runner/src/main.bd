@@ -91,19 +91,16 @@ fn list_of(text: str): List<f64> {
     if text == "-" {
         return out
     }
-    let parts = text.split(",")
-    let mut i: usize = 0
-    while i < parts.len() {
-        out.push(float_of(parts[i].as_str()))
-        i = i + 1
+    for part in text.split(",") {
+        out.push(float_of(part))
     }
     out
 }
 
 /// A matrix written as `RxC:v1,v2,...`.
 fn mat_of(text: str): Mat {
-    let halves = text.split(":")
-    let dims = halves[0].split("x")
+    let halves: List<String> = text.split(":").collect()
+    let dims: List<String> = halves[0].split("x").collect()
     Mat {
         rows: usize.parse(dims[0].as_str()).unwrap(),
         cols: usize.parse(dims[1].as_str()).unwrap(),
@@ -804,7 +801,7 @@ fn main() {
         if trimmed.len() == 0 || trimmed.starts_with("#") {
             continue
         }
-        let p = trimmed.split("|")
+        let p: List<String> = trimmed.split("|").collect()
         if mode == "num" {
             run_num(mut t, p)
         } else if mode == "float" {

@@ -4,5 +4,5 @@
 
 fn main() {
     println("before")
-    println("{"abc".split(""):?}")
+    println("{"abc".split("").count()}")
 }

@@ -174,7 +174,7 @@ fn run_hash(mut t: Tally, p: List<String>) {
 }
 
 fn run_shake(mut t: Tally, p: List<String>) {
-    let parts = p[1].split(":")
+    let parts: List<String> = p[1].split(":").collect()
     let out_len = usize.parse(parts[1].as_str()).unwrap()
     let msg = field(p[2].as_str())
     let got = if parts[0].as_str() == "shake128" {
@@ -503,7 +503,7 @@ fn main() {
         if trimmed.len() == 0 {
             continue
         }
-        let p = trimmed.split("|")
+        let p: List<String> = trimmed.split("|").collect()
         match mode.as_str() {
             "hash" => run_hash(mut t, p),
             "shake" => run_shake(mut t, p),

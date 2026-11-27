@@ -6,6 +6,16 @@ close-out checklist in `AGENTS.md`).
 
 ## Unreleased
 
+- Issue #1019: `str.split`, `rsplit`, `split_char`, `rsplit_char`, `split_whitespace`, `lines`, `match_indices`,
+  `find_all`, and `char_indices` in `std/src/text.bd` return lazy iterators (`Split<str>`, `RSplit<str>`,
+  `SplitChar<str>`, `RSplitChar<str>`, `SplitWhitespace<str>`, `Lines<str>`, `MatchIndices<str>`, `CharIndices<str>`)
+  yielding `str` views instead of eager `List<String>` copies; `rsplit`/`rsplit_char` scan backward directly.
+  `List<String>` implements `FromIterator<str>` (`spec/iterators.md`, IT18) so `.collect<List<String>>()` materializes
+  owned pieces while `List<str>` stays second-class (SC2). `String` receivers fall back to read-only `str` extension
+  methods (`spec/extensions.md`, EX3), removing the duplicate `String` wrappers from `std/src/text.bd`. Also optimized
+  `is_char_boundary` (O(1)), `char_count`, `trim_end`, `rfind`, `reverse_chars`, `slice_chars`, `String.pop`,
+  `String.insert`, `String.remove`, `String.retain`, `String.into_bytes`, `replace`, `repeat`,
+  `List<char>.collect_string`, and `List<String>.join` to reserve capacity and avoid intermediate allocations.
 - Issue #1087: the language server opens every official package without a compiler error and without hanging,
   checked by `crates/burdin_lsp/tests/official_packages.rs` (it opens each package in `packages/` over JSON-RPC, every
   module as a document). The reported false E0003 on `Result.Ok(...)`/`Result.Err(...)` in `csv` and the `http`

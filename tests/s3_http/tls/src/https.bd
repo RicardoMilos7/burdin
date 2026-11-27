@@ -33,9 +33,9 @@ use support.{
 fn short(server: Server, n: usize): String {
     let raw = server.request(n)
     let line = request_line(raw.as_str())
-    let first = raw.split("\r\n")[0].clone()
+    let first = raw.split("\r\n").next().unwrap()
     let at = first.find('\n').unwrap()
-    format("{} {}", first.as_str()[0..at], line.replace(" HTTP/1.1", ""))
+    format("{} {}", first[0..at], line.replace(" HTTP/1.1", ""))
 }
 
 /// The status, body, redirect count, and URL of a response, or the failure, on one line.

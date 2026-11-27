@@ -601,9 +601,13 @@ impl<'a> Checker<'a> {
                 }
             }
             K::Return(value) => {
+                let start = self.loans.len();
                 if let Some(value) = value {
                     self.expr(value, Mode::Move);
                 }
+                // `return` exits the function immediately, so loans created for the returned value cannot
+                // conflict with code that only runs when this branch was not taken.
+                self.loans.truncate(start);
             }
             K::Assign(place, value) => {
                 let start = self.loans.len();
@@ -695,7 +699,8 @@ impl<'a> Checker<'a> {
             self.scoped_spawn(loans_before, args);
         }
         // A second-class result derived from an argument keeps that argument borrowed until the last use of the
-        // result (RF5).
+        // result (RF5). When the result is first-class, any temporary unheld loan created for an argument (such as
+        // `StringAsStr(s)` in `if s.is_empty() { s = ... }`) ends when the call returns.
         if !self.skip_result_loan && sig.ret.is_second_class() {
             for &index in &sig.ret_origins {
                 let Some(param) = sig.params.get(index) else { continue };
@@ -707,6 +712,15 @@ impl<'a> Checker<'a> {
                 let Some(arg) = args.get(index) else { continue };
                 let mutable = param.exclusive || matches!(sig.ret, Ty::Ref { mutable: true, .. });
                 self.add_loan(arg, mutable);
+            }
+        } else if !sig.ret.is_second_class() && !self.env.scoped_spawns.get(f).copied().unwrap_or(false) {
+            let mut i = loans_before;
+            while i < self.loans.len() {
+                if self.loans[i].holders.is_empty() && !self.loans[i].pinned {
+                    self.loans.remove(i);
+                } else {
+                    i += 1;
+                }
             }
         }
         self.suppress_events = saved;

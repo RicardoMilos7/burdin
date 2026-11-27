@@ -4,6 +4,17 @@ Written at the end of the first session, updated at the end of the second, third
 
 ## State
 
+**Lazy text iterators and `std/src/text.bd` optimizations (2026-11-27, issue #1019).** `split`, `rsplit`, `split_char`,
+`rsplit_char`, `split_whitespace`, `lines`, `match_indices`, `find_all`, and `char_indices` in `std/src/text.bd` now
+return lazy iterators (`Split<str>`, `RSplit<str>`, `SplitChar<str>`, `RSplitChar<str>`, `SplitWhitespace<str>`,
+`Lines<str>`, `MatchIndices<str>`, `CharIndices<str>`) yielding `str` views (or `(usize, str)` / `(usize, char)`) with
+zero per-piece allocation. `rsplit`/`rsplit_char` scan backward directly; `List<String>` implements
+`FromIterator<str>` (`s.split(",").collect<List<String>>()`) while `List<str>` stays forbidden (SC2). `String`
+receivers now fall back to read-only `str` extensions (`spec/extensions.md`, EX3), removing all duplicate `String`
+wrappers from `std/src/text.bd`. Also optimized `is_char_boundary` (O(1)), `char_count`, `trim_end`, `rfind`,
+`reverse_chars`, `slice_chars`, `String.pop`/`insert`/`remove`/`retain`/`into_bytes`, `replace`, `repeat`,
+`List<char>.collect_string`, and `List<String>.join`.
+
 **Official packages in the language server (2026-11-27, issue #1087).** The false E0003 on `Result.Err(...)` in
 `packages/csv` and the `packages/http` hang (the server's thread overflowed its 1 GiB stack) came from the installed
 `burdin` 0.1.3 toolchain (commit `665b98a`), which the editor runs as `burdin lsp` through the proxy: 0.1.3 predates

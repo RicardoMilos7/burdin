@@ -1,0 +1,51 @@
+//@ burdin-test passed=2 failed=0
+
+// Under `burdin test`'s checking allocator, lazy text iterators (`split`, `rsplit`, `split_char`, `rsplit_char`,
+// `split_whitespace`, `lines`, `match_indices`, `find_all`, `char_indices`) walk N pieces without leaking or
+// allocating per piece, and optimized builders (`repeat`, `replace`, `reverse_chars`, `join`, `pop`, `insert`,
+// `remove`) leave no leaks (`spec/allocators.md`, AL9; issue #1019).
+
+test "lazy iterators over many pieces" {
+    let input = "alpha,beta,gamma,delta,".repeat(250)
+    let mut count: usize = 0
+    let mut total_bytes: usize = 0
+    for piece in input.split(",") {
+        count = count + 1
+        total_bytes = total_bytes + piece.len()
+    }
+    assert_eq(count, 1001)?
+    assert_eq(total_bytes, 4750)?
+
+    let mut rcount: usize = 0
+    for piece in input.rsplit(",") {
+        rcount = rcount + 1
+        let _ = piece.len()
+    }
+    assert_eq(rcount, 1001)?
+
+    assert_eq(input.split_char(',').count(), 1001)?
+    assert_eq(input.rsplit_char(',').count(), 1001)?
+    assert_eq(input.find_all("gamma").count(), 250)?
+
+    let lines_input = "line one\r\nline two\n".repeat(250)
+    assert_eq(lines_input.lines().count(), 500)?
+    assert_eq(lines_input.split_whitespace().count(), 1000)?
+    assert_eq("héllo".char_indices().count(), 5)?
+}
+
+test "builders and in-place editing" {
+    let mut s = "ab".repeat(64)
+    assert_eq(s.len(), 128)?
+    assert(s.capacity() >= 128)?
+
+    let r = s.replace("ab", "xy")
+    assert_eq(r.len(), 128)?
+    assert(r.starts_with("xyxy"))?
+
+    let rev = "aéλ中".reverse_chars()
+    assert_eq(rev, String.from("中λéa"))?
+
+    s.insert(2, 'ñ')
+    assert_eq(s.remove(2), 'ñ')?
+    assert_eq(s.pop(), Option.Some('b'))?
+}

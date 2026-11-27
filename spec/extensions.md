@@ -89,8 +89,11 @@ For `x.f(args)` the checker tries, in order:
 
 The receiver is auto-dereferenced before the lookup, exactly as for a method call. An extension's receiver applies
 when the receiver's type matches the declared pattern and every type parameter that occurs in the pattern is bound;
-for `fn List<T>.largest`, `List<i32>` applies and `Map<i32, i32>` does not. A call to an extension that is not visible
-in the module therefore reports the ordinary "no method" E0002.
+for `fn List<T>.largest`, `List<i32>` applies and `Map<i32, i32>` does not. Two built-in receiver fallbacks apply
+after the receiver's own methods and extensions: an array `[T; N]` borrows as a slice `[T]` for slice methods and
+slice extensions, and a `String` borrows as a `str` for read-only `str` extensions (issue #1019), so `std.text`
+declares its read-only text helpers once on `str` and `String`'s own methods and extensions still win first. A call
+to an extension that is not visible in the module therefore reports the ordinary "no method" E0002.
 
 The lookup stays local to the calling module: it only sees the extensions that are in that module's extension
 namespace. No whole-program search is done.
