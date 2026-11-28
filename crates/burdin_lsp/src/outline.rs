@@ -1,14 +1,31 @@
 //! The shape of a file and a workspace (`spec/lsp.md`, LS16-LS17): document and workspace symbols, folding ranges,
 //! selection ranges, and document links.
 
-use crate::index::{Item, Kind, Tk};
+use crate::index::{FileIndex, Item, Kind, Tk};
 use crate::json::Json;
-use crate::nav::{Resolver, symbol_kind};
-use crate::project::Loc;
+use crate::nav::symbol_kind;
+use crate::project::{self, Loc};
 use crate::server::{Reply, ReqError, Server};
-use crate::text::LineIndex;
+use crate::text::{self, LineIndex};
+use burdin_diag::{Diagnostics, FileId};
 use burdin_query::TriviaKind;
 use std::collections::BTreeSet;
+use std::time::SystemTime;
+
+/// Lightweight cached symbols for one unloaded workspace file, invalidated when its length or mtime changes.
+pub struct WorkspaceFileSymbols {
+    stamp: (u64, Option<SystemTime>),
+    symbols: Vec<WorkspaceSymbolEntry>,
+}
+
+struct WorkspaceSymbolEntry {
+    name: String,
+    kind: Kind,
+    owner: Option<String>,
+    lo: u32,
+    hi: u32,
+    range: (u32, u32, u32, u32),
+}
 
 // ---- symbols ----------------------------------------------------------------------------------------------------
 
@@ -68,11 +85,23 @@ fn fuzzy(query: &str, name: &str) -> bool {
     query.chars().flat_map(char::to_lowercase).all(|q| chars.any(|c| c == q))
 }
 
+struct WorkspaceMatch {
+    rank: u8,
+    name: String,
+    loc: Loc,
+    kind: Kind,
+    container: String,
+    range: Option<(u32, u32, u32, u32)>,
+}
+
 pub fn workspace_symbols(server: &mut Server, params: &Json) -> Reply {
     let query = params.get("query").as_str().unwrap_or("").to_string();
+    let q = query.to_lowercase();
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    let mut found: Vec<(u8, String, Loc, Kind, String)> = Vec::new();
+    let mut found: Vec<WorkspaceMatch> = Vec::new();
+    let mut loaded_roots: BTreeSet<std::path::PathBuf> = BTreeSet::new();
     for i in 0..server.packages.len() {
+        loaded_roots.insert(server.packages[i].root.clone());
         for path in server.packages[i].user_files() {
             if !seen.insert(path.clone()) {
                 continue;
@@ -84,7 +113,6 @@ pub fn workspace_symbols(server: &mut Server, params: &Json) -> Reply {
                     continue;
                 }
                 let lower = item.name.to_lowercase();
-                let q = query.to_lowercase();
                 let rank = if lower == q {
                     0
                 } else if lower.starts_with(&q) {
@@ -97,27 +125,109 @@ pub fn workspace_symbols(server: &mut Server, params: &Json) -> Reply {
                     Some(owner) => owner.clone(),
                     None => module.clone(),
                 };
-                found.push((
+                found.push(WorkspaceMatch {
                     rank,
-                    item.name.clone(),
-                    Loc::new(&path, item.name_span.0, item.name_span.1),
-                    item.kind,
+                    name: item.name.clone(),
+                    loc: Loc::new(&path, item.name_span.0, item.name_span.1),
+                    kind: item.kind,
                     container,
-                ));
+                    range: None,
+                });
             }
         }
     }
-    found.sort();
+    // Scan discovered-but-unloaded workspace packages lightly (syntax only, without constructing a Db or loading std).
+    let roots: Vec<std::path::PathBuf> = server.discovered_roots.iter().cloned().collect();
+    for root in roots {
+        if loaded_roots.contains(&root) {
+            continue;
+        }
+        let Ok(modules) = burdin_query::package::discover_modules_under(&root.join("src")) else {
+            continue;
+        };
+        for m in modules {
+            let path = project::path_key(&m.file);
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            let Ok(meta) = std::fs::metadata(&m.file) else { continue };
+            let stamp = (meta.len(), meta.modified().ok());
+            let fresh = server.workspace_symbols_cache.get(&path).is_some_and(|cached| cached.stamp == stamp);
+            if !fresh {
+                let Ok(text) = std::fs::read_to_string(&m.file) else { continue };
+                let mut diags = Diagnostics::default();
+                let ast = burdin_syntax::parse(FileId(0), &text, &mut diags);
+                let ix = FileIndex::new(&ast, &text);
+                let lines = LineIndex::new(&text, server.encoding);
+                let symbols = ix
+                    .items
+                    .iter()
+                    .filter(|i| i.kind != Kind::Impl)
+                    .map(|item| {
+                        let (sl, sc) = lines.position(item.name_span.0);
+                        let (el, ec) = lines.position(item.name_span.1);
+                        WorkspaceSymbolEntry {
+                            name: item.name.clone(),
+                            kind: item.kind,
+                            owner: item.owner.clone(),
+                            lo: item.name_span.0,
+                            hi: item.name_span.1,
+                            range: (sl, sc, el, ec),
+                        }
+                    })
+                    .collect();
+                server.workspace_symbols_cache.insert(path.clone(), WorkspaceFileSymbols { stamp, symbols });
+            }
+            let module = m.path.join(".");
+            if let Some(cached) = server.workspace_symbols_cache.get(&path) {
+                for item in &cached.symbols {
+                    if !fuzzy(&query, &item.name) {
+                        continue;
+                    }
+                    let lower = item.name.to_lowercase();
+                    let rank = if lower == q {
+                        0
+                    } else if lower.starts_with(&q) {
+                        1
+                    } else {
+                        2
+                    };
+                    let container = match &item.owner {
+                        Some(owner) if !module.is_empty() => format!("{module}.{owner}"),
+                        Some(owner) => owner.clone(),
+                        None => module.clone(),
+                    };
+                    found.push(WorkspaceMatch {
+                        rank,
+                        name: item.name.clone(),
+                        loc: Loc::new(&path, item.lo, item.hi),
+                        kind: item.kind,
+                        container,
+                        range: Some(item.range),
+                    });
+                }
+            }
+        }
+    }
+    found.sort_by(|a, b| {
+        (&a.rank, &a.name, &a.loc, &a.kind, &a.container).cmp(&(&b.rank, &b.name, &b.loc, &b.kind, &b.container))
+    });
     found.truncate(500);
     Ok(Json::Arr(
         found
             .iter()
-            .map(|(_, name, loc, kind, container)| {
+            .map(|m| {
+                let location = match m.range {
+                    Some((sl, sc, el, ec)) => Json::obj()
+                        .with("uri", server.uri_of(&m.loc.path))
+                        .with("range", text::range_json(sl, sc, el, ec)),
+                    None => server.location(&m.loc),
+                };
                 Json::obj()
-                    .with("name", name.as_str())
-                    .with("kind", symbol_kind(*kind))
-                    .with("location", server.location(loc))
-                    .with("containerName", container.as_str())
+                    .with("name", m.name.as_str())
+                    .with("kind", symbol_kind(m.kind))
+                    .with("location", location)
+                    .with("containerName", m.container.as_str())
             })
             .collect(),
     ))
@@ -308,6 +418,7 @@ pub fn document_links(server: &mut Server, params: &Json) -> Reply {
             if kind != TriviaKind::DocComment {
                 continue;
             }
+            let mut all_items = None;
             let mut from = 0;
             while let Some(open) = comment[from..].find('[') {
                 let start = from + open;
@@ -322,8 +433,7 @@ pub fn document_links(server: &mut Server, params: &Json) -> Reply {
                     continue;
                 }
                 let last = name.rsplit('.').next().unwrap_or(name).to_string();
-                let mut r = Resolver::new(&mut server.packages[i]);
-                let all = r.all_items();
+                let all = all_items.get_or_insert_with(|| server.packages[i].all_items()).clone();
                 let target = all
                     .iter()
                     .filter(|(_, it)| it.name == last && it.kind != Kind::Impl)

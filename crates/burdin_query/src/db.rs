@@ -300,6 +300,11 @@ impl Db {
         self.by_path.get(path).map(|&slot| &*self.files[slot].text)
     }
 
+    /// The current text of a file of the program as a shared handle, without copying.
+    pub fn file_text_rc(&self, path: &str) -> Option<Rc<str>> {
+        self.by_path.get(path).map(|&slot| self.files[slot].text.clone())
+    }
+
     /// The path of every file of the program, in module order.
     pub fn file_paths(&self) -> Vec<&str> {
         self.files.iter().map(|f| f.path.as_str()).collect()

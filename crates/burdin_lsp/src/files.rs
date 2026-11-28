@@ -63,11 +63,18 @@ pub fn will_rename(server: &mut Server, params: &Json) -> Reply {
     Ok(Json::obj().with("changes", changes))
 }
 
-/// The package that holds a folder: the one whose modules have files under it.
-fn owner_of_folder(server: &Server, folder: &str) -> Option<usize> {
+/// The package that holds a folder: the one whose modules have files under it, loading a discovered package on demand.
+fn owner_of_folder(server: &mut Server, folder: &str) -> Option<usize> {
     let prefix = format!("{}/", slashed(folder));
-    (0..server.packages.len())
+    if let Some(i) = (0..server.packages.len())
         .find(|&i| server.packages[i].user_files().iter().any(|f| slashed(f).starts_with(&prefix)))
+    {
+        return Some(i);
+    }
+    let folder_path = std::path::Path::new(folder);
+    let root = server.discovered_roots.iter().find(|root| folder_path.starts_with(root)).cloned()?;
+    let i = server.ensure_loaded(&root)?;
+    server.packages[i].user_files().iter().any(|f| slashed(f).starts_with(&prefix)).then_some(i)
 }
 
 /// A path with `/` separators, so the comparisons below read the same on Windows, where a path key uses `\`.

@@ -154,3 +154,43 @@ fn loading_a_package_reports_progress() {
     assert!(client.server_requests.is_empty(), "{:?}", client.server_requests);
     assert_eq!(client.shutdown(), 0);
 }
+
+#[test]
+fn workspace_packages_load_lazily_and_evict_inactive_databases() {
+    // Issue #1099: opening a folder with many packages discovers them without eagerly loading or analyzing
+    // databases; workspace/symbol still finds their items, and closing files bounds inactive databases.
+    let root = std::env::temp_dir().join(format!("burdin-lsp-lazy-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for n in 0..7 {
+        let dir = root.join(format!("pkg{n}"));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("burdin.toml"), format!("[package]\nname = \"pkg{n}\"\n")).unwrap();
+        std::fs::write(dir.join("src/main.bd"), format!("fn pkg_fn_{n}(): i32 {{\n    {n}\n}}\nfn main() {{}}\n"))
+            .unwrap();
+    }
+    let mut client = Client::new(&[&root]);
+
+    // Nothing is loaded eagerly on initialize.
+    let status = client.call("burdin/status", Json::Null);
+    assert_eq!(status.get("packages").as_array().len(), 0, "packages should load lazily: {}", status.to_text());
+
+    // workspace/symbol searches unloaded packages without constructing databases for them.
+    let found = client.call("workspace/symbol", Json::obj().with("query", "pkg_fn_6"));
+    assert_eq!(found.as_array().len(), 1, "unloaded package symbol found: {}", found.to_text());
+    let status = client.call("burdin/status", Json::Null);
+    assert_eq!(status.get("packages").as_array().len(), 0, "workspace/symbol must not load full Db instances");
+
+    // Opening and closing files across 7 packages keeps at most 4 inactive packages warm in memory.
+    for n in 0..7 {
+        let file = root.join(format!("pkg{n}/src/main.bd"));
+        let (uri, _) = client.open(&file);
+        client.diagnostics(&uri, |_| true);
+        client.notify("textDocument/didClose", Json::obj().with("textDocument", Json::obj().with("uri", uri)));
+    }
+    let status = client.call("burdin/status", Json::Null);
+    let loaded = status.get("packages").as_array().len();
+    assert!(loaded <= 4, "inactive packages should be evicted to at most 4, got {loaded}");
+
+    assert_eq!(client.shutdown(), 0);
+    let _ = std::fs::remove_dir_all(&root);
+}
