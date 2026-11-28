@@ -63,7 +63,9 @@ The full matrix, with the test behind each row, is in
   tested platform. The Windows and macOS artifacts are not yet tested in CI, and a Burdin program cannot link a built
   artifact (it compiles the library's source). `--lto` and the sanitizers do not apply to a library, and there is no
   `root` key or per-profile `[lib]`. See [packages and modules](/guide/packages-and-modules/#libraries).
-- **LLVM 21 is required.** Building the compiler from source, and running `burdin build`, need the LLVM 21 libraries. The
+- **LLVM 21 is required to build from source.** Prebuilt releases bundle or statically link LLVM 21, while building the
+  compiler from source requires the LLVM 21 development libraries (development builds also load the LLVM 21 shared
+  library at run time unless built with `BURDIN_STATIC_LLVM=1`). The
   [installation guide](/getting-started/installation/) describes each platform.
 
 ## Reporting a problem
