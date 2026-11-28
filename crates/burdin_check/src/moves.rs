@@ -807,7 +807,7 @@ impl<'a> Checker<'a> {
                     self.expr(&args[0], Mode::Move);
                     self.expr(&args[1], Mode::Move);
                 }
-                tir::Builtin::ClosureOwn => self.expr(&args[0], Mode::Move),
+                tir::Builtin::ClosureOwn | tir::Builtin::BytesIntoString => self.expr(&args[0], Mode::Move),
                 // The primitives that start a thread or a context consume the closure they run.
                 tir::Builtin::Rt(op) if op.takes_closure() => {
                     for (i, a) in args.iter().enumerate() {

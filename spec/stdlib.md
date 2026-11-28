@@ -686,10 +686,11 @@ sequence and replaces each byte that is not part of one with U+FFFD REPLACEMENT 
 checked slice: it returns `Option.None` when the range is reversed, past the end, or either end splits a character, and a
 view otherwise.
 
-The unchecked reinterpretation behind `str.from_utf8` is the primitive `__view_as_text(view: [u8]): str`, which
-requires an `unsafe` block (E0161); `std` calls it only after validating the bytes, so an ordinary program cannot
-make a `str` that is not UTF-8. `str.from_utf8` and `String.from_utf8` are associated functions resolved by name;
-`as_bytes` is a compiler-provided method.
+The unchecked reinterpretation behind `str.from_utf8` is the primitive `__view_as_text(view: [u8]): str`, and the
+unchecked buffer adoption behind `String.from_utf8` is `__bytes_into_string(own bytes: List<u8>): String`; both
+require an `unsafe` block (E0161). `std` calls them only after validating the bytes, so an ordinary program cannot
+make a `str` or `String` that is not UTF-8. `str.from_utf8` and `String.from_utf8` are associated functions resolved
+by name; `as_bytes` is a compiler-provided method.
 
 **Slicing and character boundaries (issue #916).** On `str` and `String`, `s[a..b]` and `s[a..=b]` panic unless both
 ends are character boundaries: the start of the text, the end of the text, or a byte that does not continue a
@@ -2252,7 +2253,7 @@ directory. A change is visible to a child started with `process.run`.
 None of these runs at compile time: a compile-time evaluation that reaches one fails with E0224 (`const-eval.md`, CE6).
 
 Tests: `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`,
-`env_test_mode`.
+`env_test_mode`, `env_allocations`.
 
 ### Child processes (issue #419)
 
@@ -2692,7 +2693,7 @@ lists them by rule).
 | `List` convenience methods | `m24_stdlib/list_retain_reverse`, `list_dedup`, `list_position`, `list_extend_resize`, `list_drops` |
 | `Option` and `Result` combinators | `m24_stdlib/option_combinators`, `option_take_replace`, `result_combinators` |
 | Files, processes, environment | `m09_stdlib/file_io`, `file_io_binary`, `env_args`, `exit_code`, `process_run`, `m16_errors/std_errors`, `m24_stdlib/io_error_kinds`, `io_error_kind_display`, `io_error_kind_mapping` |
-| Environment variables and the working directory | `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`, `env_test_mode` |
+| Environment variables and the working directory | `m24_stdlib/env_vars`, `env_bytes_unix`, `env_bytes_windows`, `env_cwd`, `env_child_unix`, `env_bad_calls`, `env_test_mode`, `env_allocations` |
 | Child processes | `m24_stdlib/process_command`, `process_pipes`, `process_windows`, `process_bad_calls`, `process_test_mode`, `m20_const/purity_process` |
 | Memory helpers and assertions | `m09_stdlib/std_helpers`, `unreachable_aborts`, `m24_stdlib/mem_helpers`, `mem_drop_moves`, `mem_take_needs_default`, `assert_messages`, `assert_ne_passes`, `assert_needs_eq`, `assert_message_bad_args`, `assert_ne_aborts`, `assert_message_aborts`, `assert_eq_message_aborts`, `debug_assert_release`, `debug_assert_aborts`, `debug_assert_eq_aborts`, `todo_aborts`, `unimplemented_aborts`, `m10_test_runner/assert_messages_typed`, `m10_test_runner/*`, `m16_errors/assert_typed` |
 | Error declarations and conversions | `m16_errors/error_keyword`, `error_display`, `error_message_specs`, `error_bad_template`, `error_bad_from`, `error_duplicate_from`, `error_from_conversion`, `error_missing_conversion`, `error_not_display` |

@@ -753,6 +753,11 @@ impl<'p> Interp<'p, '_> {
                 let bytes = self.peek(&args[0], |v| v.elems().iter().map(|b| b.int() as u8).collect::<Vec<u8>>())?;
                 Value::Str(Rc::from(bytes))
             }
+            Builtin::BytesIntoString => {
+                let list = self.eval(&args[0], Mode::Move)?;
+                let bytes = list.elems().iter().map(|b| b.int() as u8).collect::<Vec<u8>>();
+                Value::String(bytes)
+            }
             // `burdin test --interpret` models the C heap, so the raw allocation builtins run there; every other
             // compile-time evaluation keeps its containers abstract and has no allocator
             // (`spec/allocators.md`, AL10; `spec/test-runner.md`, IN1).

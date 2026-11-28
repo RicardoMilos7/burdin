@@ -425,7 +425,7 @@ impl<'a> Checker<'a> {
                     self.expr(&args[0], Mode::Move);
                     self.expr(&args[1], Mode::Move);
                 }
-                tir::Builtin::ClosureOwn => self.expr(&args[0], Mode::Move),
+                tir::Builtin::ClosureOwn | tir::Builtin::BytesIntoString => self.expr(&args[0], Mode::Move),
                 // The barrier takes the value and hands it back (`spec/bench.md`, BN9).
                 tir::Builtin::BlackBox => self.expr(&args[0], Mode::Move),
                 tir::Builtin::Rt(op) if op.takes_closure() => {

@@ -275,6 +275,9 @@ pub enum Builtin {
     /// `__view_as_text(view)`: reinterprets a `[u8]` view as a `str` without checking it. `std` uses it after
     /// validating the bytes (`str.from_utf8`); it requires `unsafe` (E0161).
     ViewAsText,
+    /// `__bytes_into_string(own bytes)`: adopts an owned `List<u8>` as a `String` without copying or checking it.
+    /// `std` uses it after validating the bytes (`String.from_utf8`); it requires `unsafe` (E0161).
+    BytesIntoString,
     /// `String.with_capacity(n)`: an empty string whose buffer holds `n` bytes without growing.
     StringWithCapacity,
     /// `String.try_with_capacity(n)`: the fallible `with_capacity` (`spec/allocators.md`, AL11).

@@ -147,15 +147,22 @@ impl FnCx<'_> {
                             let text = self.coerce_arg(text, &Ty::Str);
                             return mk(tir::ExprKind::Builtin(b, vec![text]), Ty::Unit, span);
                         }
-                        // The unchecked bytes-to-text cast upholds the `str` invariant only when the bytes are
+                        // The unchecked bytes-to-text casts uphold the `str`/`String` invariant only when the bytes are
                         // valid UTF-8, which is what `unsafe` promises here (`spec/stdlib.md`).
-                        Some(b @ Builtin::ViewAsText) => {
+                        Some(b @ (Builtin::ViewAsText | Builtin::BytesIntoString)) => {
                             if self.unsafe_depth == 0 {
+                                let name = if matches!(b, Builtin::ViewAsText) {
+                                    "__view_as_text"
+                                } else {
+                                    "__bytes_into_string"
+                                };
                                 self.diags.error(
                                     Code::UNSAFE_REQUIRED,
                                     id.span,
-                                    "`__view_as_text` treats bytes as text without checking them; it requires an \
-                                     `unsafe` block",
+                                    format!(
+                                        "`{name}` treats bytes as text without checking them; it requires an \
+                                         `unsafe` block"
+                                    ),
                                 );
                             }
                             let sig = builtin_sig(b, self.globals);

@@ -1,0 +1,38 @@
+//@ burdin-test passed=3 failed=0
+
+// `env.get`, `env.current_dir`, and `String.from_utf8` adopt the validated `List<u8>` buffer instead of copying
+// into a second `String` (issue #1022). `__alloc_count()` pins the number of blocks (spec/allocators.md, AL9).
+
+test "env.get allocates one buffer" {
+    let name = "BURDIN_TEST_ENV_ALLOC_1022"
+    env.set(name, "hello-world")?
+    let before = __alloc_count()
+    let val = env.get(name).unwrap()
+    assert_eq(__alloc_count() - before, 1)?
+    assert_eq(val.as_str(), "hello-world")?
+
+    let before_missing = __alloc_count()
+    assert(env.get("BURDIN_TEST_ENV_ALLOC_1022_MISSING").is_none())?
+    assert_eq(__alloc_count() - before_missing, 0)?
+    env.remove(name)?
+}
+
+test "env.current_dir allocates one buffer" {
+    let before = __alloc_count()
+    let dir = env.current_dir()?
+    assert_eq(__alloc_count() - before, 1)?
+    assert(dir.len() > 0)?
+}
+
+test "String.from_utf8 adopts List<u8> without a second copy" {
+    let mut bytes = List<u8>.with_capacity(5)
+    bytes.push(104)
+    bytes.push(101)
+    bytes.push(108)
+    bytes.push(108)
+    bytes.push(111)
+    let before = __alloc_count()
+    let text = String.from_utf8(bytes)?
+    assert_eq(__alloc_count() - before, 0)?
+    assert_eq(text.as_str(), "hello")?
+}
