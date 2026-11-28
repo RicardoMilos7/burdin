@@ -138,7 +138,7 @@ fn layout_impl(
     fmt.docs = docs;
     let (units, eof) = fmt.file().map_err(|e| e.0)?;
     if units.is_empty() && eof.is_empty() {
-        return Ok(String::new());
+        return Ok(if range.is_some() { text.to_string() } else { String::new() });
     }
     let mut out = String::new();
     match range {
@@ -171,13 +171,13 @@ fn layout_impl(
             let mut whole = doc::concat(doc_parts);
             doc::prepare(&mut whole);
             out.push_str(&doc::print(&whole, width));
+            while out.ends_with('\n') || out.ends_with(' ') {
+                out.pop();
+            }
+            out.push('\n');
         }
         Some((lo, hi)) => out = format_units_in_range(text, units, &eof, lo, hi, width),
     }
-    while out.ends_with('\n') || out.ends_with(' ') {
-        out.pop();
-    }
-    out.push('\n');
     Ok(out)
 }
 

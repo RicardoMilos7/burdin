@@ -170,3 +170,58 @@ fn typing_a_brace_or_a_newline_formats_the_line() {
     assert!(edits.is_null() || edits.as_array().is_empty(), "{}", edits.to_text());
     assert_eq!(client.shutdown(), 0);
 }
+
+/// Pressing Enter (`\n`) preserves the new line and any intentional blank lines at EOF, after `{`, before `}`,
+/// and between statements, while still formatting a crooked line before the cursor (issue #1101).
+#[test]
+fn typing_a_newline_preserves_newlines_and_blank_lines() {
+    let root = fixture("completion");
+    let mut client = Client::new(&[&root]);
+    let (uri, text) = client.open(&root.join("src/main.bd"));
+    client.diagnostics(&uri, |_| true);
+
+    // 1. Pressing Enter at the end of the file preserves the trailing newline.
+    let at_eof = format!("{text}\n");
+    let eof_pos = Json::obj().with("line", text.lines().count() as u32).with("character", 0);
+    client.change(&uri, 2, &at_eof);
+    let edits = client.call(
+        "textDocument/onTypeFormatting",
+        Json::obj()
+            .with("textDocument", Json::obj().with("uri", uri.as_str()))
+            .with("position", eof_pos)
+            .with("ch", "\n")
+            .with("options", Json::obj().with("tabSize", 4).with("insertSpaces", true)),
+    );
+    assert_eq!(apply(&at_eof, edits.as_array(), client.encoding), at_eof, "{}", edits.to_text());
+
+    // 2. Pressing Enter right before `}` (with auto-indent spaces) preserves the new line.
+    let before_brace = text.replace("    println(\"{n} {p.sum()}\")\n}", "    println(\"{n} {p.sum()}\")\n    \n}");
+    assert_ne!(before_brace, text);
+    client.change(&uri, 3, &before_brace);
+    let edits = on_type(&mut client, &uri, &before_brace, "    \n}", 4, "\n");
+    assert_eq!(apply(&before_brace, edits.as_array(), client.encoding), before_brace, "{}", edits.to_text());
+
+    // 3. Pressing Enter right after `{` preserves the new line.
+    let after_open = text.replace("fn main() {\n", "fn main() {\n    \n");
+    assert_ne!(after_open, text);
+    client.change(&uri, 4, &after_open);
+    let edits = on_type(&mut client, &uri, &after_open, "    \n    let n", 4, "\n");
+    assert_eq!(apply(&after_open, edits.as_array(), client.encoding), after_open, "{}", edits.to_text());
+
+    // 4. Pressing Enter on a blank line preserves the blank line.
+    let on_blank = text.replace("    let n: i32 = 5\n", "    let n: i32 = 5\n\n\n");
+    assert_ne!(on_blank, text);
+    client.change(&uri, 5, &on_blank);
+    let edits = on_type(&mut client, &uri, &on_blank, "\n\n    let mut p", 1, "\n");
+    assert_eq!(apply(&on_blank, edits.as_array(), client.encoding), on_blank, "{}", edits.to_text());
+
+    // 5. Pressing Enter after a crooked line formats only that line and keeps the new line.
+    let crooked_before_brace =
+        text.replace("    println(\"{n} {p.sum()}\")\n}", "          println(\"{n} {p.sum()}\")\n    \n}");
+    assert_ne!(crooked_before_brace, text);
+    client.change(&uri, 6, &crooked_before_brace);
+    let edits = on_type(&mut client, &uri, &crooked_before_brace, "    \n}", 4, "\n");
+    assert_eq!(apply(&crooked_before_brace, edits.as_array(), client.encoding), before_brace, "{}", edits.to_text());
+
+    assert_eq!(client.shutdown(), 0);
+}
