@@ -25,7 +25,6 @@ import harness
 AUDIT = harness.ROOT / "spec" / "e9000-audit.md"
 REGISTRY = harness.TESTS / "README.md"
 WORKFLOW = harness.ROOT / ".github" / "workflows" / "ci.yml"
-CHANGELOG = harness.ROOT / "CHANGELOG.md"
 SITE_RE = re.compile(r"Code::UNSUPPORTED\b|\.unsupported\(")
 MARKER_RE = re.compile(r"//\s*e9000:\s*([A-Za-z0-9_-]+)")
 ISSUE_RE = re.compile(r"#[0-9]+")
@@ -134,9 +133,8 @@ for line in workflow.splitlines():
         continue
     finished.update(re.findall(r"\bm(?:1[2-9]|2[0-4])\b", line))
 # Milestone 24 (the standard-library roundout) is open-ended: its folder runs in CI while its sub-issues land, so
-# CI alone does not mean it is done. It counts as finished once the changelog has its entry (the close-out step).
-if "m24" in finished and not re.search(r"^### Milestone 24\b", harness.read_text(CHANGELOG), re.MULTILINE):
-    finished.discard("m24")
+# CI alone does not mean it is done.
+finished.discard("m24")
 if finished:
     for ident, row in sorted(rows.items()):
         if row["owner"] in finished:
@@ -162,7 +160,7 @@ if len(registry_section) == 2:
     if re.search(r"^\| E9000 \|", registry_table, re.MULTILINE):
         add_problem("tests/README.md: E9000 is in the registry; it is temporary and must stay out")
 
-for relative in ("spec/stage1-subset.md", "HANDOFF.md", "CLAUDE.md", "tests/README.md"):
+for relative in ("spec/stage1-subset.md", "CLAUDE.md", "tests/README.md"):
     path = harness.ROOT / relative
     checks += 1
     if not path.is_file() or "e9000-audit.md" not in harness.read_text(path):

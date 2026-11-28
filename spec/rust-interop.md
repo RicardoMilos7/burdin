@@ -89,7 +89,7 @@ A null pointer where the shim requires a pointer is a panic. **Every panic in a 
 the functions are `extern "C"`, and Rust aborts when a panic reaches that boundary, because unwinding into Burdin is
 undefined. A Rust function that can fail returns `Result`, which is skipped, so a fallible API needs a thin
 non-`Result` function in the crate (or its own `#[no_mangle]` function) to be bound; a first-class mapping of errors is
-a later decision (`HANDOFF.md`).
+a later decision.
 
 ## RI5. Names and the Burdin module
 

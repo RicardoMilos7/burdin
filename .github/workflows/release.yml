@@ -340,25 +340,13 @@ jobs:
           BURDIN_VERSION: ${{ needs.plan.outputs.version }}
         run: python3 tests/check_release.py
 
-      - name: Generate the release notes
-        run: |
-          set -eu
-          if [ "$CHANNEL" = stable ]; then
-            python3 tests/release_notes.py --version "$VERSION" --check-links --output NOTES.md
-          else
-            python3 tests/release_notes.py --unreleased --check-links --output NOTES.md
-            { printf '_Nightly build %s._\n\n' "$VERSION"; cat NOTES.md; } > NOTES.nightly
-            mv NOTES.nightly NOTES.md
-          fi
-          test -s NOTES.md
-
       - name: Create the GitHub release
         if: needs.plan.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          args=(--title "Burdin $VERSION" --notes-file NOTES.md)
+          args=(--title "Burdin $VERSION" --generate-notes)
           if [ "$CHANNEL" = nightly ]; then args+=(--prerelease); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" --clobber dist/*.tar.gz dist/SHA256SUMS

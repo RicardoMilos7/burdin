@@ -4,8 +4,8 @@ description: Where the exact rules of Burdin are written, which file to read for
 ---
 
 The guide explains Burdin with examples. The exact rules are in the repository, and they are the final word. The
-conformance tests are the most precise statement of behavior, the specification files explain each area in prose with
-rule numbers, and the design document covers features that come later.
+conformance tests are the most precise statement of behavior, and the specification files explain each area in prose with
+rule numbers.
 
 ## Sources of truth
 
@@ -16,7 +16,6 @@ rule numbers, and the design document covers features that come later.
    error code.
 2. **The specification files** in
    [`spec/`](https://github.com/RicardoMilos7/burdin/tree/main/spec), listed below.
-3. **The design document**, `Burdin Language Design.md`, which covers the whole language, including later stages.
 
 When these disagree, the repository's files win over any copy hosted elsewhere, and a disagreement is a bug to report.
 

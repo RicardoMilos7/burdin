@@ -5,9 +5,8 @@ representation of `any Interface`, when a value is boxed, which interfaces may b
 safety), the meaning of `impl Interface` in a signature, and the downcast. It extends the stage 0 decisions; it does
 not replace any of them.
 
-The design document says `impl Shape` in a signature is one concrete type known at compile time, and `any Shape` is
-a type "the compiler places on the heap, so `List<any Shape>` works without a visible wrapper"
-(`Burdin Language Design.md`, "Interfaces and generics", "Dispatch"). This page makes that precise.
+In Burdin, `impl Shape` in a signature is one concrete type known at compile time, and `any Shape` is
+a type the compiler places on the heap, so `List<any Shape>` works without a visible wrapper. This page makes that precise.
 
 The rules are numbered `AN1`-`AN15`, by the same convention as the other stage 1 rule sets. The tests are in
 `tests/m15_any/`.

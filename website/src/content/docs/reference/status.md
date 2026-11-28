@@ -3,13 +3,12 @@ title: Status and limitations
 description: What is finished in Burdin, which platforms it is tested on, and what it does not do yet.
 ---
 
-Burdin is a personal experiment in a language with memory safety and no garbage collector. It is not for production, and
-it makes no stability promise. Programs can change from one version to the next, and the language is still being built.
+Burdin is a native-compiled language with memory safety and no garbage collector. It is under active development and
+makes no stability promise yet. Programs can change from one version to the next.
 
 ## Where the work stands
 
-The record below is from `HANDOFF.md` in the repository, as of 2026-11-24. That file is updated with each session, so the
-[repository](https://github.com/RicardoMilos7/burdin/blob/main/HANDOFF.md) has the latest state.
+The summary below reflects the current state of the compiler and standard library.
 
 | Part | Status |
 | --- | --- |

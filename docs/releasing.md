@@ -108,7 +108,6 @@ burdin-<version>-<target>/
   burdin-toolchain  the toolchain manager, installed as the burdin proxy (spec/toolchain.md)
   LLVM-C.dll        (Windows only, beside burdin.exe)
   README.md
-  CHANGELOG.md
   docs/error-codes.md
   docs/lints.md
   packages/         (the official packages, spec/packages.md; the compiler finds them beside itself)
@@ -203,38 +202,23 @@ item; there is no Homebrew tap, `winget` package, or distro package yet.
 
 ## Release notes
 
-Release notes are generated from `CHANGELOG.md`, not written twice:
-
-```console
-$ tests/release_notes.py --version 0.1.0 --check-links --output NOTES.md   # a stable release
-$ tests/release_notes.py --unreleased --check-links                       # a dry run
-```
-
-- `--version X.Y.Z` requires a `## X.Y.Z — <date>` section; the release workflow fails on a tag without one, so the
-  changelog must be updated before tagging.
-- `--unreleased` uses the `## Unreleased` section and is the rehearsal form; the release job prefixes nightly notes
-  with the nightly version.
-- `--check-links` checks every relative Markdown link in the extracted section against the repository, so a note
-  that points at a removed file fails before publication. Absolute URLs are left to `tests/check_docs.py`.
+Release notes are generated automatically by GitHub (`gh release create --generate-notes`) from the pull requests merged since the previous release tag.
 
 ## Cutting a release
 
-1. Move the `## Unreleased` entries under a new `## <version> — <YYYY-MM-DD>` heading in `CHANGELOG.md` and leave an
-   `## Unreleased` section with a placeholder line for the next cycle (`release_notes.py --unreleased`, which the
-   nightly notes use, fails on an empty section).
-2. Set `[workspace.package] version` in `Cargo.toml` to `<version>`, then run a build so `Cargo.lock` records the
+1. Set `[workspace.package] version` in `Cargo.toml` to `<version>`, then run a build so `Cargo.lock` records the
    new workspace versions, and commit both.
-3. Run the full local gate: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`,
+2. Run the full local gate: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`,
    `cargo test --workspace`, `tests/run_tests.py` and `tests/run_tests.py --release`, `tests/check_release.py`, and
    `python3 tests/build_release.py --verify-reproducible`.
-4. Run the release workflow by hand with `publish: false` and inspect the six archives, `SHA256SUMS`, and the
+3. Run the release workflow by hand with `publish: false` and inspect the six archives, `SHA256SUMS`, and the
    reproducibility job. Install the Linux archive with `install.sh` and run `burdin build/run/test` on a sample
    package.
-5. Commit, tag `v<version>`, and push the tag. The workflow builds the six targets, verifies the checksums and
-   reproducibility, generates the notes, and creates the GitHub release. Re-running the workflow on the same tag
+4. Commit, tag `v<version>`, and push the tag. The workflow builds the six targets, verifies the checksums and
+   reproducibility, generates the release notes from merged PRs, and creates the GitHub release. Re-running the workflow on the same tag
    uploads the assets again (`gh release upload --clobber`) instead of creating a second release.
-6. After publication, verify the installer one-liners on a clean machine and record the versions and checksums in
-   the release notes. Open the next `## Unreleased` section.
+5. After publication, verify the installer one-liners on a clean machine and record the versions and checksums in
+   the release notes.
 
 ## Rehearsal checklist
 
