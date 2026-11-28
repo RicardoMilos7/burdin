@@ -1,8 +1,7 @@
 # Burdin stage 0 conformance tests
 
-These programs are the target for the stage 0 compiler (Rust, LLVM backend). They come from
-[the design document](../Burdin%20Language%20Design.md) and [the stage 0 subset](../spec/stage0-subset.md). The design
-document's snippets are illustrative; these programs are the executable form. Each folder is one milestone; a
+These programs are the target for the stage 0 compiler (Rust, LLVM backend), covering
+[the stage 0 subset](../spec/stage0-subset.md) and the language specifications in `spec/`. Each folder is one milestone; a
 milestone is done when every test in its folder and in all earlier folders passes.
 
 Stage 1 starts at `m12_closures`; stage 2 starts at `s2_tasks`; stage 3 has the one conformance folder
@@ -196,7 +195,7 @@ plain text file of `case<TAB>median nanoseconds` lines, and `--threshold` sets t
 may get slower before `--baseline` reports it. CI keeps the baseline in `actions/cache`, keyed by the runner OS
 and architecture, the pinned toolchain, and `Cargo.lock`, so only numbers from the same kind of machine are
 compared; a push to main records a new baseline, and a pull request compares against the last main run on that
-platform. `HANDOFF.md` records the first baseline and the meaning of the `--smoke` budgets.
+platform.
 
 ## Dependencies and licenses
 
@@ -687,7 +686,7 @@ These extend the list above; they are settled in `spec/` and witnessed by the st
 
 The expected outputs and diagnostics were written by hand before the compiler existed, so a passing test only
 proves that the implementation matches the expectation. Issue #20 reviewed every test against
-[the design](../Burdin%20Language%20Design.md), [the grammar](../spec/grammar.md),
+[the grammar](../spec/grammar.md),
 [the memory rules](../spec/memory-rules.md), [the stage 0 subset](../spec/stage0-subset.md), and the decisions
 above on 2026-11-14. Each milestone folder was read in full. No expectation was found to encode an accidental
 behavior, so no test was changed; the behavior the tests pin where the design is silent, defers a feature, or
@@ -748,9 +747,9 @@ code generation; `m09_stdlib/string_order`), and an invalid `extern "C"` type or
 
 ## Intentional choices and deviations
 
-"Design" means [the design document](../Burdin%20Language%20Design.md). A **deviation** is a place where stage 0
-deliberately does something the design does not, or does not yet, require. The other entries are choices the design
-leaves open that the tests now pin. Features that are only deferred have no tests here; the complete list is in
+A **deviation** is a place where stage 0
+deliberately does something the initial design did not, or does not yet, require. The other entries are choices the
+tests now pin. Features that are only deferred have no tests here; the complete list is in
 [the stage 0 subset](../spec/stage0-subset.md). Code quoted below comes from tests that compile and run; the one
 illustrative fragment, the `Drop` declaration with `...`, is marked as such in decision 11.
 
@@ -778,7 +777,7 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
 - **`for` borrows its collection for the whole loop.** The design's `for` runs through a borrowing iterator, and
   stage 0 makes the borrow last until the loop ends, so a `mut` call on the same collection in the body is E0111.
   Decision 6; `m09_stdlib/for_borrows_list.bd`, `m06_conventions/for_borrow_forms.bd`. Appending while iterating
-  returns with the stage 1 iteration protocol (`HANDOFF.md` known problem 19).
+  returns with the stage 1 iteration protocol.
 - **Owned parameters drop after locals, in reverse declaration order.** The design fixes the order of locals and
   fields but not parameters. DR3; `m05_ownership/drop_params_and_let_underscore.bd`.
 - **Derived `Ord` orders enum variants by declaration.** The design's `Ord` rule covers field order; it does not
@@ -796,7 +795,7 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   [the memory rules](../spec/memory-rules.md) now say so.
 - **Borrow liveness is conservative (deviation in precision).** The rule is "until the last use", but stage 0
   computes it per top-level statement, so any use inside a loop keeps a loan live for the whole loop. This rejects
-  some programs the design would allow; it never accepts a conflicting one. RF2, `HANDOFF.md`;
+  some programs the design would allow; it never accepts a conflicting one. RF2;
   `m06_conventions/borrow_ends_at_last_use.bd` pins the last-use rule.
 - **`main` returns unit (deviation).** A parameter or a non-unit return type is E0003. `fn main(): Result<()>` and
   printing a returned error are stage 1 (m16 prints the error chain to stderr and exits non-zero). Decision 8;
@@ -878,7 +877,6 @@ illustrative fragment, the `Drop` declaration with `...`, is marked as such in d
   (no `Hash` requirement): integers, floats, text, tuples, structs, enums, `Option`, `Result`, and ranges hash
   structurally. Iteration scans the slots, so tests sum or sort instead of depending on order
   (`m09_stdlib/map_ops.bd`, `map_key_types.bd`, `map_remove_and_clear.bd`, `map_many_keys.bd`, `word_count.bd`).
-  `HANDOFF.md` known problem 14.
 - **`Option` and `Result` expose a subset (deviation).** The tests use `unwrap`, `expect`, `is_some`, `is_none`,
   `orelse`, and `?` (and `is_ok`/`is_err` exist); the design's `map`, `and_then`, `unwrap_or`, `ok_or`, and the rest
   are not implemented until stage 1 (issue #481). `m09_stdlib/option_result_basics.bd`.

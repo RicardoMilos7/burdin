@@ -18,7 +18,7 @@ Usage: tests/build_release.py [options]
   -h, --help              show this help
 
 The archive is `burdin-<version>-<target>.tar.gz`; its root directory is `burdin-<version>-<target>/` and holds the
-compiler, the toolchain manager `burdin-toolchain` (spec/toolchain.md), README.md, CHANGELOG.md,
+compiler, the toolchain manager `burdin-toolchain` (spec/toolchain.md), README.md,
 docs/error-codes.md, docs/lints.md, and packages/ (the official packages, which the compiler finds beside its own
 executable: spec/packages.md, PKG16); a Windows archive also holds
 LLVM-C.dll beside burdin.exe, because that build links LLVM as a shared library. Linux and macOS builds link LLVM
@@ -386,7 +386,6 @@ def package_binary(
             shutil.copyfile(llvm_dll, stage / root / "LLVM-C.dll")
         for source, destination in (
             (ROOT / "README.md", stage / root / "README.md"),
-            (ROOT / "CHANGELOG.md", stage / root / "CHANGELOG.md"),
             (ROOT / "docs" / "error-codes.md", stage / root / "docs" / "error-codes.md"),
             (ROOT / "docs" / "lints.md", stage / root / "docs" / "lints.md"),
         ):

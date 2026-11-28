@@ -77,7 +77,7 @@ folder and every earlier folder pass in debug and release.
 | 24+ | `m24_stdlib` | `Set`, `Deque`, priority heap, Unicode, paths, time, random, the serialization framework's foundation | The containers and text helpers the author's projects need, each with tests |
 
 Milestone 21 is the riskiest and may split (for example `m21a_reflection`, `m21b_derives`); milestone 20 shipped
-whole. A split is a decision to record in `HANDOFF.md`, not a silent change.
+whole. A split is a decision to record explicitly, not a silent change.
 
 Milestone 12 is complete: `tests/m12_closures` and every earlier folder pass in debug and release, and the closure
 rules are recorded in `spec/memory-rules.md` CL1-CL11 and `spec/grammar.md` section 4.
@@ -452,4 +452,4 @@ written down.
 - Keep the stage 0 checks local (one body, signatures only) and keep the compiler free of LLVM before codegen. If
   a MIR is ever introduced, put it between `burdin_tir` and `burdin_codegen`; the compile-time engine
   (`burdin_interp`) depends only on `burdin_tir` and `burdin_diag`, like the checks.
-- Update `HANDOFF.md`, the design document, and this file when a decision changes, in that order.
+- Update this file and the relevant spec files when a decision changes.

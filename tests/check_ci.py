@@ -580,7 +580,7 @@ check_script(
     "SHA256SUMS",
     "install.sh",
     "install.ps1",
-    "release_notes.py",
+    "--generate-notes",
     "x86_64-unknown-linux-gnu",
     "docs/releasing.md",
     "channel:",
@@ -590,7 +590,6 @@ check_script(
 for relative in (
     "docs/releasing.md",
     "tests/build_release.py",
-    "tests/release_notes.py",
     "install.sh",
     "install.ps1",
 ):
@@ -632,8 +631,6 @@ if not platform_page.is_file():
 else:
     if "docs/platform-support.md" not in harness.read_text(harness.ROOT / "README.md"):
         add_problem("README.md: does not link docs/platform-support.md")
-    if "platform-support.md" not in harness.read_text(harness.ROOT / "CHANGELOG.md"):
-        add_problem("CHANGELOG.md: the release notes do not link docs/platform-support.md")
 
 # Scripts CI invokes must exist, be executable, and have LF endings.
 scripts = [
@@ -674,7 +671,6 @@ scripts = [
     "tests/check_verbosity.py",
     "tests/check_profiles.py",
     "tests/build_release.py",
-    "tests/release_notes.py",
     "tests/bench_regression.py",
     "tests/fuzz.py",
     "tests/harness.py",

@@ -18,9 +18,8 @@ disagree about behavior, the spec wins and the disagreement should be raised ins
 4. `spec/stage1-subset.md` — the milestone list and its decisions. `spec/iterators.md`, `spec/existentials.md`,
    `spec/test-runner.md`, and `spec/bench.md` describe the iteration protocol, `any`/`impl`, `burdin test`, and
    `burdin bench`.
-5. `spec/stage0-subset.md` (complete) and `HANDOFF.md` for the current state; `Burdin Language Design.md` for the
-   full rationale.
-6. `CHANGELOG.md` for what has shipped; the GitHub roadmap and milestones for what is planned.
+5. `spec/stage0-subset.md` (complete).
+6. The GitHub roadmap and milestones for what is planned.
 
 The files in this repository are the only maintained copies. Documents hosted on claude.ai are historical: they are
 not updated and may disagree with the repository.
@@ -79,7 +78,6 @@ python3 tests/check_verbosity.py          check `-q`/`--quiet` and `-v`/`--verbo
 python3 tests/check_profiles.py          check named build profiles: inheritance, settings, overflow, debug info, per-package overrides
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
-python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
 cargo fmt --all --check            formatting
 cargo clippy --all-targets -- -D warnings
 cargo test                         unit tests
@@ -133,7 +131,7 @@ same on every host (invoke it with `python3` on Unix and `python` on Windows); t
   `crates/` for it and extend the workspace rather than piling code into an existing crate. Keep the one-way dependency
   direction: syntax to sema to check to codegen, `burdin_tir` as the shared vocabulary, `burdin_diag` under everything,
   and nothing before codegen touching LLVM. Update this file's map when a crate is added, removed, or renamed.
-- **Update the docs with the code.** `HANDOFF.md`, the relevant `spec/*.md`, and `CHANGELOG.md` change in the same
+- **Update the docs with the code.** The relevant `spec/*.md` changes in the same
   milestone as the behavior, and so does the website (next rule).
 - **Update the website with the language.** The website in `website/` (Astro and Starlight, published to GitHub Pages)
   is the user-facing documentation: the guides, the reference, and the examples in `website/src/content/docs/`. A change
@@ -159,11 +157,9 @@ same on every host (invoke it with `python3` on Unix and `python` on Windows); t
 
 - [ ] Every test in its folder and every earlier folder passes in debug and release.
 - [ ] `.github/workflows/ci.yml` lists the finished milestone's folder.
-- [ ] `HANDOFF.md` describes the new behavior and the remaining gaps.
 - [ ] The relevant `spec/*.md` is updated (rule IDs and test lists included).
 - [ ] The website pages in `website/src/content/docs/` describe the milestone's user-visible behavior, and
       `bun run check:examples` in `website/` passes.
-- [ ] `CHANGELOG.md` has an entry for the milestone.
 - [ ] `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` pass.
 - [ ] Every issue in the milestone is closed with its verification result, and the GitHub milestone is closed.
 
@@ -203,8 +199,6 @@ same on every host (invoke it with `python3` on Unix and `python` on Windows); t
 README.md                 the entry point: building, hello world, and the driver contract
 CLAUDE.md                 Claude-specific entry point and working rules
 AGENTS.md                 this shared working agreement
-HANDOFF.md                current state, decisions, and what is next
-CHANGELOG.md              shipped milestones
 spec/                     grammar, memory rules, standard-library surface, derives, constant evaluation, the linter, the
                           documentation generator, the query library, the language server, stage 0 scope, stage 1 plan
 website/                  the user-facing site (Astro and Starlight): guides, reference, and examples in

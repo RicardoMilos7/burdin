@@ -7,7 +7,7 @@
 Stage 0 is a Rust compiler for the core subset of Burdin: enough to write real, compiler-sized programs. It enforces
 the memory-model checks from the start. Everything else waits for stage 1, which adds the rest of the core language to
 the same Rust compiler. The compiler stays in Rust; Burdin is not bootstrapped into itself (see "After stage 1" below).
-The language is described in `../Burdin Language Design.md`, the syntax in `grammar.md`, the checks in `memory-rules.md`,
+The syntax is described in `grammar.md`, the checks in `memory-rules.md`,
 and the conformance tests in `../tests/`.
 
 ## Inclusion rule

@@ -5,8 +5,7 @@ Usage: tests/check_platform_support.py
 BURDIN selects the driver, like tests/run_tests.py; otherwise target/{debug,release}/burdin[.exe] is used.
 
 What it checks:
-  * docs/platform-support.md exists and is linked from README.md (the documentation index) and
-    CHANGELOG.md (the release notes);
+  * docs/platform-support.md exists and is linked from README.md (the documentation index);
   * the support matrix names the three CI jobs and the runner image each one uses, keeps the untested
     configurations marked untested, and names only tests and scripts that exist and run in CI;
   * the row for the running host names the target triple `burdin --version` prints;
@@ -25,7 +24,6 @@ import sys
 import harness
 
 README = harness.ROOT / "README.md"
-CHANGELOG = harness.ROOT / "CHANGELOG.md"
 WORKFLOW = harness.ROOT / ".github" / "workflows" / "ci.yml"
 DOC = harness.ROOT / "docs" / "platform-support.md"
 
@@ -57,9 +55,6 @@ burdin = harness.require_burdin(
 check()
 if "docs/platform-support.md" not in harness.read_text(README):
     add_problem("README.md: does not link docs/platform-support.md")
-check()
-if "platform-support.md" not in harness.read_text(CHANGELOG):
-    add_problem("CHANGELOG.md: the release notes do not link docs/platform-support.md")
 
 # --- The matrix agrees with CI -----------------------------------------------
 

@@ -6,7 +6,7 @@ stage 0 is the core subset, and stage 1 adds the rest of the core language to th
 bootstrapped into itself. A self-hosted compiler may be reconsidered once the language is more mature and at least its
 core features are complete, but it is not planned.
 
-Read `HANDOFF.md` for the current state, the open decisions, and what to do next. Read `AGENTS.md` for the shared
+Read `AGENTS.md` for the shared
 working agreement: the definition of done, the verification policy, the milestone close-out checklist, and the issue
 workflow. Process rules live in `AGENTS.md`; behavior lives in `tests/` and `spec/`.
 
@@ -85,7 +85,6 @@ not updated and may disagree with the repository.
 3. `spec/stage0-subset.md` is what stage 0 must support, what it must not, and the 11 milestones (all complete).
    `spec/stage1-subset.md` is the stage 1 plan: what each milestone adds, the decisions it needs, and the
    roadmaps for later stages.
-4. `Burdin Language Design.md` is the full language design, including features that come after stage 0.
 
 If these disagree, stop and say so. Do not pick one silently.
 
@@ -169,7 +168,6 @@ python3 tests/check_target.py            check the target directory's artifact c
 python3 tests/check_cross.py             check `--target`: the six targets' objects, the target facts, the per-platform runtime layouts, and the cross link (spec/cross-compilation.md)
 python3 tests/check_release.py           check the release workflow, archives, checksums, installers, and version policy
 python3 tests/build_release.py           build, smoke-test, and package one release target (--verify-reproducible)
-python3 tests/release_notes.py           generate release notes from CHANGELOG.md and check their links
 python3 tests/check_platform_support.py  check the platform support page against CI and binary-safe output (needs a built driver)
 python3 tests/fuzz.py                    long lexer/parser fuzzing session; the scheduled CI job runs it (issue #447)
 cargo test --workspace                   the Rust unit and integration tests, including `burdin_query` and the
@@ -189,8 +187,6 @@ conformance runner expects `burdin build`, `burdin run`, and `burdin test` as de
 README.md                 the entry point: building, hello world, and the driver contract
 CLAUDE.md                 the Claude-specific entry point and working rules
 AGENTS.md                 the shared working agreement: definition of done, close-out checklist, verification policy
-HANDOFF.md                current state, decisions, and what is next
-CHANGELOG.md              shipped milestones
 Cargo.toml                workspace
 crates/
   burdin_diag/              spans, diagnostics, error codes
@@ -307,7 +303,7 @@ rewrites it before code generation.
 
 Rust is pinned by `rust-toolchain.toml` to an exact stable version with the `clippy` and `rustfmt` components (currently
 `1.100.0`; edition 2024), so `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings` give the same
-verdict on a clean machine. Bump the version deliberately, together with a `cargo fmt --all` pass and a HANDOFF.md note;
+verdict on a clean machine. Bump the version deliberately, together with a `cargo fmt --all` pass;
 `tests/check_ci.py` fails if the pin, its components, or CI's verification step goes missing. **LLVM 21** through
 `inkwell` 0.11 (feature `llvm21-1-no-llvm-linking`), and the system C compiler driver as the linker against libc (`cc`
 on Linux and macOS, MSVC `cl` on Windows; `BURDIN_CC` overrides). `crates/burdin_codegen/build.rs` links the shared LLVM

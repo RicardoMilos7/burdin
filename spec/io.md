@@ -35,7 +35,7 @@ operation is done. What waits depends on the caller:
 * **On the main thread or a `thread.spawn` thread**, the call blocks the thread on the scheduler's condition variable.
   There is no task to park and no worker to free.
 
-This is the whole point of the milestone (`Burdin Language Design.md`, "Concurrency"): there is no `async`/`await` and
+This is the whole point of the milestone: there is no `async`/`await` and
 no function coloring, so a function that reads a socket is an ordinary function and works the same from a task, a
 thread, or `main`.
 

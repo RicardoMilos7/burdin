@@ -7,7 +7,6 @@
     are deterministic, and rejects a binary whose --version disagrees with the archive name;
   * install.sh and install.ps1 verify SHA256SUMS before installing, and install.sh installs from a local release
     directory (the rehearsal path) and refuses a tampered archive or an unsupported platform;
-  * tests/release_notes.py extracts a changelog section and fails on a broken relative link;
   * docs/releasing.md records the version scheme, channels, artifact protocol, reproducibility, and rehearsal;
   * `burdin --version` reports the version and channel the policy requires.
 
@@ -38,7 +37,6 @@ INSTALLER_SETTINGS = (
     "BURDIN_RELEASE_DIR",
     "BURDIN_NO_MODIFY_PATH",
 )
-NOTES =harness.TESTS / "release_notes.py"
 POLICY = harness.ROOT / "docs" / "releasing.md"
 
 problems = []
@@ -96,10 +94,6 @@ def run_release(*arguments, env=None):
     return harness.run([sys.executable, str(RELEASE_SCRIPT), *arguments], env=env)
 
 
-def run_notes(*arguments):
-    return harness.run([sys.executable, str(NOTES), *arguments])
-
-
 with harness.temporary_dir("burdin-release-") as work:
     # --- The release workflow (issues #453, #455, #456) ----------------------------------
 
@@ -127,7 +121,7 @@ with harness.temporary_dir("burdin-release-") as work:
             "windows-11-arm",
             "tests/build_release.py",
             "--verify-reproducible",
-            "tests/release_notes.py",
+            "--generate-notes",
             "tests/check_release.py",
             "BURDIN_VERSION",
             "BURDIN_CHANNEL",
@@ -200,7 +194,6 @@ with harness.temporary_dir("burdin-release-") as work:
     # --- Packaging and checksums (issue #455) -------------------------------------------
 
     expect_file("tests/build_release.py", RELEASE_SCRIPT)
-    expect_file("tests/release_notes.py", NOTES)
     expect_file("install.sh", INSTALL_SH)
     expect_file("install.ps1", INSTALL_PS1)
 
@@ -287,7 +280,6 @@ with harness.temporary_dir("burdin-release-") as work:
                 f"burdin-9.9.9-{target}",
                 f"burdin-9.9.9-{target}/burdin",
                 f"burdin-9.9.9-{target}/README.md",
-                f"burdin-9.9.9-{target}/CHANGELOG.md",
                 f"burdin-9.9.9-{target}/docs/error-codes.md",
                 f"burdin-9.9.9-{target}/docs/lints.md",
                 # The official packages sit beside the compiler, where it looks for them (spec/packages.md, PKG16).
@@ -853,54 +845,6 @@ with harness.temporary_dir("burdin-release-") as work:
                     check()
                     if read_user_path() != saved_path:
                         add_problem("the user PATH was not restored after the install.ps1 PATH test")
-
-    # --- Release notes (issue #456) ------------------------------------------------------
-
-    if NOTES.is_file():
-        check()
-        notes = run_notes("--unreleased", "--check-links")
-        if notes.returncode != 0:
-            add_problem(
-                "release_notes.py --unreleased --check-links: "
-                f"{harness.text(notes.stderr).rstrip(chr(10))}"
-            )
-        else:
-            notes_text = harness.text(notes.stdout)
-            expect_contains("release notes title", "# Burdin ", notes_text)
-            check()
-            if len(notes_text.rstrip("\n").split("\n")) <= 2:
-                add_problem("release notes are empty")
-
-        fixture = work / "CHANGELOG-fixture.md"
-        harness.write_text(
-            fixture,
-            "# Changelog\n"
-            "\n"
-            "## Unreleased — Test\n"
-            "\n"
-            "- See [README](README.md) and [the error codes](docs/error-codes.md).\n"
-            "\n"
-            "## 1.2.3 — 2026-01-01\n"
-            "\n"
-            "- See [a missing file](does-not-exist.md).\n",
-        )
-        check()
-        versioned = run_notes("--changelog", str(fixture), "--version", "1.2.3")
-        if versioned.returncode != 0 or "# Burdin 1.2.3" not in harness.text(versioned.stdout):
-            add_problem("release_notes.py --version did not extract the versioned section")
-        check()
-        if run_notes(
-            "--changelog", str(fixture), "--version", "1.2.3", "--check-links"
-        ).returncode == 0:
-            add_problem("release_notes.py --check-links accepted a broken link")
-        check()
-        if run_notes("--changelog", str(fixture), "--version", "9.9.9").returncode == 0:
-            add_problem("release_notes.py accepted a version with no changelog section")
-        check()
-        if run_notes(
-            "--changelog", str(fixture), "--unreleased", "--check-links"
-        ).returncode != 0:
-            add_problem("release_notes.py rejected a valid Unreleased section")
 
     # --- The driver reports its version and channel (issues #454, #456) ------------------
 

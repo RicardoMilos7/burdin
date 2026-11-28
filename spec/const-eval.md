@@ -8,8 +8,7 @@ a plain `if`, the unrolled reflection loop, and `embed`. This page is the exact 
 
 ## CE1. The engine: the typed tree, interpreted (decision, issue #158)
 
-The design (`Burdin Language Design.md`, "Compiler architecture") says the compile-time interpreter and the backends
-both read a MIR, so compile-time behavior matches compiled behavior. Stage 1 decides **not** to introduce a MIR. The
+The compiler does **not** introduce a separate MIR so that compile-time behavior matches compiled behavior. The
 engine is an interpreter over the checked typed tree (`burdin_tir`), in its own crate, `burdin_interp`, which depends
 only on `burdin_tir` and `burdin_diag`. It runs after the memory checks and before code generation:
 

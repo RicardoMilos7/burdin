@@ -1874,7 +1874,7 @@ fn hash_seeded<T: Hash>(seed: u64, value: T): u64           // `Hasher.with_seed
 
 **HS1. One stable algorithm.** There is one hash, the FNV-1a fold of `derives.md`, and it is stable: the same value
 gives the same `u64` on every run, every platform, and every build profile, in a `const` and at run time. It does not
-change between compiler versions without a breaking-change entry in `CHANGELOG.md`, so a program may store it (an
+change between compiler versions without a breaking-change note in the release notes, so a program may store it (an
 on-disk cache key, a content hash). `Map` and `Set` hash their keys with this same fold; the order they iterate in is
 still unspecified, and a program must not depend on it (the table's layout is not part of the contract, only the
 fold is).
