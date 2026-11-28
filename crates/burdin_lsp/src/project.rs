@@ -4,13 +4,18 @@
 //! also part of every package that depends on it, so an edit reaches every database that reads the file.
 
 use crate::builtins;
-use crate::index::FileIndex;
+use crate::index::{FileIndex, Item};
+use burdin_diag::{Diagnostics, FileId};
 use burdin_query::EntryMode;
 use burdin_query::package;
 use burdin_query::{Analysis, Cancelled, Db, ModuleInfo, Options, PackageInfo, Parsed};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+
+/// Immutable syntax indexes shared by every package in a server session (`<std>/*.bd` and `<std>/builtins.bd`).
+pub type SharedIndexes = Rc<RefCell<HashMap<String, Rc<FileIndex>>>>;
 
 /// A stretch of a file, as the server passes it around: the path as the database spells it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -64,14 +69,22 @@ pub struct Package {
     /// The texts the latest analysis with a program was computed on.
     good_texts: Texts,
     indexes: HashMap<String, (Rc<Parsed>, Rc<FileIndex>)>,
-    /// The index of the built-ins' file (`builtins.rs`), made on first use.
-    builtins: Option<Rc<FileIndex>>,
+    /// Shared `<std>/*.bd` and `<std>/builtins.bd` indexes owned by the server session.
+    shared_indexes: SharedIndexes,
+    /// Cached result of [`Package::all_items`], invalidated when a file's text changes.
+    all_items_cache: Option<Rc<Vec<(String, Item)>>>,
+    /// Monotonic tick of the last request or edit that touched this package, for LRU eviction.
+    pub last_used: u64,
 }
 
 impl Package {
     /// Loads a package directory or a single file. `texts` are the open documents, by path, which replace the text
     /// on disk.
-    pub fn load(root: &Path, texts: &HashMap<String, String>) -> Result<Package, String> {
+    pub fn load(
+        root: &Path,
+        texts: &HashMap<String, String>,
+        shared_indexes: SharedIndexes,
+    ) -> Result<Package, String> {
         // The open documents are the texts an editor shows, so the loader finds the official packages they import
         // even before the file is saved (`spec/packages.md`, PKG15).
         let workspace = package::load_for_tests_with_texts(root, texts)?;
@@ -86,10 +99,16 @@ impl Package {
         let name = workspace.packages[workspace.entry_package].name.clone();
         let lint = workspace.packages[workspace.entry_package].lint.clone();
         let db = Db::from_workspace(&workspace, &overrides, Options { mode: EntryMode::Test, ..Options::default() })?;
-        Ok(Package::new(root, name, db, lint))
+        Ok(Package::new(root, name, db, lint, shared_indexes))
     }
 
-    fn new(root: &Path, name: String, db: Db, lint: Vec<(String, String, usize)>) -> Package {
+    fn new(
+        root: &Path,
+        name: String,
+        db: Db,
+        lint: Vec<(String, String, usize)>,
+        shared_indexes: SharedIndexes,
+    ) -> Package {
         let modules = db.modules();
         let packages = db.packages();
         Package {
@@ -107,7 +126,9 @@ impl Package {
             lint_cache: None,
             good_texts: HashMap::new(),
             indexes: HashMap::new(),
-            builtins: None,
+            shared_indexes,
+            all_items_cache: None,
+            last_used: 0,
         }
     }
 
@@ -140,9 +161,16 @@ impl Package {
     pub fn set_text(&mut self, path: &str, text: &str) -> bool {
         if self.has_file(path) && self.db.set_file(path, text) {
             self.dirty = true;
+            self.all_items_cache = None;
             return true;
         }
         false
+    }
+
+    /// Releases the stale fallback analysis kept for syntax-error recovery while editing.
+    pub fn drop_stale(&mut self) {
+        self.last_good = None;
+        self.good_texts.clear();
     }
 
     /// Whether a current text of a package in the database imports an official package the database's layout does
@@ -195,8 +223,8 @@ impl Package {
         self.user_files()
             .into_iter()
             .filter_map(|p| {
-                let text = self.db.file_text(&p)?;
-                Some((p, Rc::from(text)))
+                let text = self.db.file_text_rc(&p)?;
+                Some((p, text))
             })
             .collect()
     }
@@ -241,7 +269,23 @@ impl Package {
     /// The syntax index of a file at its current text.
     pub fn index(&mut self, path: &str) -> Option<Rc<FileIndex>> {
         if path == builtins::PATH {
-            return Some(self.builtins.get_or_insert_with(|| Rc::new(builtins::get().index.clone())).clone());
+            if let Some(ix) = self.shared_indexes.borrow().get(path) {
+                return Some(ix.clone());
+            }
+            let ix = Rc::new(builtins::get().index.clone());
+            self.shared_indexes.borrow_mut().insert(path.to_string(), ix.clone());
+            return Some(ix);
+        }
+        if path.starts_with("<std>/") {
+            if let Some(ix) = self.shared_indexes.borrow().get(path) {
+                return Some(ix.clone());
+            }
+            let text = self.db.file_text(path)?;
+            let mut diags = Diagnostics::default();
+            let ast = burdin_syntax::parse(FileId(0), text, &mut diags);
+            let ix = Rc::new(FileIndex::new(&ast, text));
+            self.shared_indexes.borrow_mut().insert(path.to_string(), ix.clone());
+            return Some(ix);
         }
         let parsed = self.db.syntax(path)?;
         if let Some((p, index)) = self.indexes.get(path)
@@ -252,6 +296,25 @@ impl Package {
         let index = Rc::new(FileIndex::new(&parsed.ast, &parsed.text));
         self.indexes.insert(path.to_string(), (parsed, index.clone()));
         Some(index)
+    }
+
+    /// Every item of every file of the package, the standard library's and the built-ins' included.
+    /// Cached until a file's text changes, so repeated requests share the list without cloning.
+    pub fn all_items(&mut self) -> Rc<Vec<(String, Item)>> {
+        if let Some(all) = &self.all_items_cache {
+            return all.clone();
+        }
+        let mut paths: Vec<String> = self.modules.iter().map(|m| m.path.clone()).collect();
+        paths.push(builtins::PATH.to_string());
+        let mut out = Vec::new();
+        for path in paths {
+            if let Some(ix) = self.index(&path) {
+                out.extend(ix.items.iter().map(|i| (path.clone(), i.clone())));
+            }
+        }
+        let all = Rc::new(out);
+        self.all_items_cache = Some(all.clone());
+        all
     }
 
     /// The parsed tree of a file at its current text.

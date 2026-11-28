@@ -274,8 +274,8 @@ struct Entry {
     chain_out: Fp,
     /// The body recorded a source line or column (a trace frame or an assertion's location).
     located: bool,
-    /// The files any span of the entry points into.
-    files: HashSet<FileId>,
+    /// The files any span of the entry points into (almost always one file, so a tiny `Vec` avoids a `HashSet` per entry).
+    files: Vec<FileId>,
     /// The last revision that used the entry, for [`CheckCache::evict`].
     used: u64,
 }
@@ -374,7 +374,7 @@ impl CheckCache {
         }
         let touched: HashSet<FileId> = edits.iter().map(|e| e.file).collect();
         self.entries.retain(|_, entry| {
-            if entry.files.is_disjoint(&touched) {
+            if !entry.files.iter().any(|f| touched.contains(f)) {
                 return true;
             }
             // A body that recorded a line or column must not move across a change that renumbers lines or shifts
@@ -389,7 +389,7 @@ impl CheckCache {
                 }
             }
             let mut keep = true;
-            let mut files = HashSet::new();
+            let mut files = Vec::new();
             let mut shift = |span: &mut Span| {
                 for edit in edits {
                     if span.file != edit.file {
@@ -405,7 +405,9 @@ impl CheckCache {
                         keep = false;
                     }
                 }
-                files.insert(span.file);
+                if !files.contains(&span.file) {
+                    files.push(span.file);
+                }
             };
             entry.map_spans(&mut shift);
             if keep {
@@ -637,12 +639,14 @@ impl CheckCache {
                 delta,
                 chain_out,
                 located: globals.located.get(),
-                files: HashSet::new(),
+                files: Vec::new(),
                 used: self.generation,
             };
-            let mut files = HashSet::new();
+            let mut files = Vec::new();
             entry.map_spans(&mut |span: &mut Span| {
-                files.insert(span.file);
+                if !files.contains(&span.file) {
+                    files.push(span.file);
+                }
             });
             entry.files = files;
             self.entries.insert(entry_key, entry);

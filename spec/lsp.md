@@ -64,9 +64,14 @@ Tests: `positions_count_utf16_units_or_utf8_bytes_as_negotiated`,
 
 **LS4. One database per package.** A file belongs to the package of the nearest directory above it with a
 `burdin.toml`, or, with none, is a package of one file. Each package root has one query database (`spec/query.md`),
-loaded the way `burdin test` loads a package, so `test` blocks are checked. The workspace folders' packages are found
-when the client is initialized (a folder's own `burdin.toml`, and those in its subdirectories up to four levels down,
-skipping hidden directories, `target`, and `node_modules`); others load when one of their files opens. A package's path dependencies are part of its database, and
+loaded the way `burdin test` loads a package, so `test` blocks are checked. The workspace folders' packages are
+discovered when the client is initialized (a folder's own `burdin.toml`, and those in its subdirectories up to four
+levels down, skipping hidden directories, `target`, and `node_modules`), and their query databases load lazily on demand
+when a file opens or is queried (issue #1099). Background analysis runs only for active packages (those with at least
+one open document), `workspace/symbol` scans unloaded workspace packages syntactically without creating a database or
+loading `std`, immutable standard-library and built-in syntax indexes are shared across databases in a session, and
+inactive packages with no open documents are evicted in LRU order beyond a small cache limit. A package's path
+dependencies are part of its database, and
 an edit in one is applied to every database that contains the file, so the packages that depend on it see the change.
 The memo of the query library means an edit re-checks only the bodies it can affect: the bodies of a dependency are
 reused, not checked again, after an edit of the package that uses it (`burdin/status` reports the bodies the last

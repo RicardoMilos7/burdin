@@ -124,15 +124,7 @@ impl<'a> Resolver<'a> {
         if let Some(all) = &self.all {
             return all.clone();
         }
-        let mut paths: Vec<String> = self.p.modules.iter().map(|m| m.path.clone()).collect();
-        paths.push(crate::builtins::PATH.to_string());
-        let mut out = Vec::new();
-        for path in paths {
-            if let Some(ix) = self.p.index(&path) {
-                out.extend(ix.items.iter().map(|i| (path.clone(), i.clone())));
-            }
-        }
-        let all = Rc::new(out);
+        let all = self.p.all_items();
         self.all = Some(all.clone());
         all
     }

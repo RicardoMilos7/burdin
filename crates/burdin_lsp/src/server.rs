@@ -6,13 +6,17 @@ use crate::project::{self, Loc, Package};
 use crate::rpc::{self, code};
 use crate::text::{self, Encoding, LineIndex};
 use burdin_query::CancelHandle;
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// Maximum number of inactive packages (those with no open document) kept warm in memory.
+const MAX_INACTIVE_PACKAGES: usize = 4;
 
 /// The commands the server runs itself (`workspace/executeCommand`).
 pub const SERVER_COMMANDS: &[&str] = &[
@@ -212,6 +216,14 @@ pub struct Server {
     pub official: Option<Rc<crate::official::OfficialIndex>>,
     /// The documentation of the items the latest completion left for `completionItem/resolve`, by label (LS23).
     pub completion_docs: HashMap<String, String>,
+    /// Package directories discovered under workspace folders, loaded lazily on demand.
+    pub discovered_roots: BTreeSet<PathBuf>,
+    /// Shared immutable `<std>/*.bd` and `<std>/builtins.bd` syntax indexes across all packages in this session.
+    pub shared_indexes: project::SharedIndexes,
+    /// Lightweight per-file symbol cache for unloaded workspace packages (`workspace/symbol`).
+    pub workspace_symbols_cache: HashMap<String, crate::outline::WorkspaceFileSymbols>,
+    /// Monotonic counter bumped whenever a package is touched, for LRU eviction of inactive packages.
+    use_tick: u64,
 }
 
 /// The files and folders a rename request is about: Burdin sources, and any folder (a module directory).
@@ -304,6 +316,10 @@ impl Server {
             broken: HashMap::new(),
             official: None,
             completion_docs: HashMap::new(),
+            discovered_roots: BTreeSet::new(),
+            shared_indexes: Rc::new(RefCell::new(HashMap::new())),
+            workspace_symbols_cache: HashMap::new(),
+            use_tick: 0,
         }
     }
 
@@ -721,14 +737,72 @@ impl Server {
         }
         let folders = self.folders.clone();
         for folder in folders {
-            self.load_folder(&folder);
+            self.discover_folder(&folder);
         }
     }
 
-    fn load_folder(&mut self, folder: &Path) {
+    fn next_tick(&mut self) -> u64 {
+        self.use_tick += 1;
+        self.use_tick
+    }
+
+    fn touch_package(&mut self, i: usize) {
+        let tick = self.next_tick();
+        if let Some(p) = self.packages.get_mut(i) {
+            p.last_used = tick;
+        }
+    }
+
+    /// Whether any open document belongs to `p` (either as one of its own files or a dependency).
+    fn is_package_active(&self, p: &Package) -> bool {
+        self.docs.keys().any(|path| p.has_file(path))
+    }
+
+    fn discover_folder(&mut self, folder: &Path) {
         for root in project::discover(folder) {
-            if !self.packages.iter().any(|p| p.root == root) {
-                self.load_package(&root);
+            self.discovered_roots.insert(root);
+        }
+    }
+
+    fn rediscover_all(&mut self) {
+        self.discovered_roots.clear();
+        let folders = self.folders.clone();
+        for folder in folders {
+            self.discover_folder(&folder);
+        }
+    }
+
+    /// Returns the index of `root`, loading it lazily if it is not already loaded.
+    pub fn ensure_loaded(&mut self, root: &Path) -> Option<usize> {
+        if let Some(i) = self.packages.iter().position(|p| p.root == root) {
+            self.touch_package(i);
+            return Some(i);
+        }
+        self.load_package(root)
+    }
+
+    /// Drops stale fallback analyses on inactive packages and evicts the least recently used inactive packages
+    /// beyond [`MAX_INACTIVE_PACKAGES`].
+    fn evict_inactive_packages(&mut self) {
+        let mut inactive: Vec<(usize, u64)> = Vec::new();
+        for i in 0..self.packages.len() {
+            if !self.is_package_active(&self.packages[i]) {
+                self.packages[i].drop_stale();
+                inactive.push((i, self.packages[i].last_used));
+            }
+        }
+        if inactive.len() <= MAX_INACTIVE_PACKAGES {
+            return;
+        }
+        inactive.sort_by_key(|&(_, tick)| tick);
+        let evict_count = inactive.len() - MAX_INACTIVE_PACKAGES;
+        let mut to_remove: Vec<usize> = inactive.into_iter().take(evict_count).map(|(i, _)| i).collect();
+        to_remove.sort_unstable();
+        for i in to_remove.into_iter().rev() {
+            let old = self.packages.remove(i);
+            self.published.remove(&old.root);
+            for path in old.published {
+                self.publish_empty(&path);
             }
         }
     }
@@ -736,11 +810,13 @@ impl Server {
     /// Loads (or reloads) the package at `root`. Returns its index.
     fn load_package(&mut self, root: &Path) -> Option<usize> {
         let texts: HashMap<String, String> = self.docs.iter().map(|(k, d)| (k.clone(), d.text.clone())).collect();
-        match Package::load(root, &texts) {
+        match Package::load(root, &texts, self.shared_indexes.clone()) {
             Ok(mut package) => {
                 self.broken.remove(root);
                 // A new database counts its revisions from the start again: publish its first analysis.
                 self.published.remove(&package.root);
+                package.last_used = self.next_tick();
+                let target_root = package.root.clone();
                 let existing = self.packages.iter().position(|p| p.root == root);
                 match existing {
                     Some(i) => {
@@ -750,7 +826,8 @@ impl Server {
                     }
                     None => {
                         self.packages.push(package);
-                        Some(self.packages.len() - 1)
+                        self.evict_inactive_packages();
+                        self.packages.iter().position(|p| p.root == target_root)
                     }
                 }
             }
@@ -800,6 +877,7 @@ impl Server {
         let file = Path::new(path);
         let root = project::root_of(file);
         if let Some(i) = self.packages.iter().position(|p| p.root == root && p.has_file(path)) {
+            self.touch_package(i);
             return Some(i);
         }
         if self.broken.contains_key(&root) && root != file {
@@ -811,10 +889,14 @@ impl Server {
         {
             return Some(i);
         }
+        if self.broken.contains_key(&root) && root != file {
+            return None;
+        }
         // A file under a package that is not one of its modules (`build.bd`, a file outside `src`) is a program of
         // its own.
         let own = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
         if let Some(i) = self.packages.iter().position(|p| p.root == own) {
+            self.touch_package(i);
             return Some(i);
         }
         if self.broken.contains_key(&own) {
@@ -839,6 +921,7 @@ impl Server {
         self.reload_missing_official_imports(&key);
         // A newly opened file gets its diagnostics even when its package was analyzed before and nothing changed.
         for i in self.packages_with(&key) {
+            self.touch_package(i);
             let root = self.packages[i].root.clone();
             self.published.remove(&root);
         }
@@ -868,6 +951,9 @@ impl Server {
         if !key.starts_with("<std>/") {
             self.set_text_everywhere(&key, &text);
             self.reload_missing_official_imports(&key);
+            for i in self.packages_with(&key) {
+                self.touch_package(i);
+            }
         }
     }
 
@@ -900,6 +986,7 @@ impl Server {
                 self.publish_empty(&path);
             }
         }
+        self.evict_inactive_packages();
     }
 
     /// Gives the new text of a file to every database that reads it.
@@ -950,31 +1037,34 @@ impl Server {
                 rediscover = true;
                 if let Some(dir) = path.parent() {
                     let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-                    let dependents: Vec<PathBuf> = self
+                    let mut dependents: Vec<PathBuf> = self
                         .packages
                         .iter()
                         .filter(|p| p.root == dir || p.packages.iter().any(|q| q.dir.as_deref() == Some(&dir)))
                         .map(|p| p.root.clone())
                         .collect();
+                    let has_open_doc = self.docs.keys().any(|p| project::root_of(Path::new(p)) == dir);
+                    if (self.broken.contains_key(&dir) || has_open_doc) && !dependents.contains(&dir) {
+                        dependents.push(dir);
+                    }
                     for root in dependents {
                         self.load_package(&root);
                     }
                 }
             } else if kind == 2 {
+                self.workspace_symbols_cache.remove(&key);
                 if !self.docs.contains_key(&key)
                     && let Ok(text) = std::fs::read_to_string(&path)
                 {
                     self.set_text_everywhere(&key, &text);
                 }
             } else {
+                self.workspace_symbols_cache.remove(&key);
                 self.reload_containing(&key);
             }
         }
         if rediscover {
-            let folders = self.folders.clone();
-            for folder in folders {
-                self.load_folder(&folder);
-            }
+            self.rediscover_all();
         }
     }
 
@@ -984,6 +1074,11 @@ impl Server {
             let Some(path) = removed.get("uri").as_str().and_then(text::uri_to_path) else { continue };
             let path = path.canonicalize().unwrap_or(path);
             self.folders.retain(|f| *f != path);
+            self.discovered_roots.retain(|r| !r.starts_with(&path) || self.folders.iter().any(|f| r.starts_with(f)));
+            let removed_prefix = project::path_key(&path);
+            let remaining_prefixes: Vec<String> = self.folders.iter().map(|f| project::path_key(f)).collect();
+            self.workspace_symbols_cache
+                .retain(|k, _| !k.starts_with(&removed_prefix) || remaining_prefixes.iter().any(|p| k.starts_with(p)));
             let gone: Vec<usize> = (0..self.packages.len())
                 .filter(|&i| {
                     let p = &self.packages[i];
@@ -1006,7 +1101,7 @@ impl Server {
             if !self.folders.contains(&path) {
                 self.folders.push(path.clone());
             }
-            self.load_folder(&path);
+            self.discover_folder(&path);
         }
     }
 
@@ -1035,16 +1130,20 @@ impl Server {
 
     fn has_background_work(&self) -> bool {
         self.packages.iter().any(|p| {
-            p.dirty
-                || p.analysis.as_ref().is_some_and(|a| self.published.get(&p.root) != Some(&a.revision))
-                || p.analysis.is_none()
+            self.is_package_active(p)
+                && (p.dirty
+                    || p.analysis.as_ref().is_some_and(|a| self.published.get(&p.root) != Some(&a.revision))
+                    || p.analysis.is_none())
         })
     }
 
-    /// Analyzes the packages whose inputs changed and publishes their diagnostics. An edit that arrives meanwhile
-    /// cancels the analysis; the loop comes back once the edits stop.
+    /// Analyzes the active packages whose inputs changed and publishes their diagnostics. An edit that arrives
+    /// meanwhile cancels the analysis; the loop comes back once the edits stop.
     fn background(&mut self) {
         for i in 0..self.packages.len() {
+            if !self.is_package_active(&self.packages[i]) {
+                continue;
+            }
             let needs_analysis = self.packages[i].dirty || self.packages[i].analysis.is_none();
             if needs_analysis {
                 let first = self.packages[i].analyses == 0;
@@ -1076,6 +1175,7 @@ impl Server {
 
     /// Analyzes a package for a request. The request's cancellation stops it.
     pub fn analyzed(&mut self, i: usize) -> Result<(), ReqError> {
+        self.touch_package(i);
         if !self.packages[i].dirty && self.packages[i].analysis.is_some() {
             return Ok(());
         }
