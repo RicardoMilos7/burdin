@@ -453,7 +453,7 @@ Path {
             let top = stack.len()
             let can_pop = top > 0 && !is_parent_dir(bytes, stack[top - 1].0, stack[top - 1].1)
             if is_parent && can_pop {
-                let dropped = stack.pop()
+                let _ = stack.pop()
             } else if !is_parent || !rooted {
                 stack.push((from, to))
             }

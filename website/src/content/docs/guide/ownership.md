@@ -249,7 +249,7 @@ fn main() {
         println("inner {c.name}")
     }
     consume(b)
-    println("end of main")
+    println("end of main ({a.name})")
 }
 ```
 

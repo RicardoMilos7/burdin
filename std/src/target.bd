@@ -20,6 +20,7 @@ enum Os: Copy, Clone, Eq {
 /// assert(a == Arch.X86_64 || a == Arch.Aarch64)
 /// ```
 enum Arch: Copy, Clone, Eq {
+    // lint: allow(non_pascal_case)
     X86_64
     Aarch64
 }

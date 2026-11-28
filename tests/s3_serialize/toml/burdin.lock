@@ -6,7 +6,7 @@ version = 1
 name = "toml"
 version = "0.1.0"
 source = "official"
-checksum = "sha256:d742c3ad329ddfe21ff265a431102ca18843612cee36c2d992f7a25421450b4d"
+checksum = "sha256:9720c67cc2367801e10a47447f09f46bcc3a3a3f6ac708daa1da78f05b7f5b57"
 dependencies = []
 
 [[package]]

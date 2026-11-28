@@ -1942,8 +1942,7 @@ Writer {
 
     /// Removes the innermost frame.
     priv fn close(mut self) {
-        self.frames.pop()
-        return
+        let _ = self.frames.pop()
     }
 
     /// The value written, as a `Value` tree.

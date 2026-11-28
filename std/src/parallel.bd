@@ -157,7 +157,7 @@ interface ParallelIterator<T> requires Sync {
             let mut i = lo
             while i < hi {
                 match self.__par_get(i) {
-                    Option.Some(x) => { n = n + 1 }
+                    Option.Some(_) => { n = n + 1 }
                     Option.None => {}
                 }
                 i = i + 1
@@ -210,7 +210,7 @@ interface ParallelIterator<T> requires Sync {
     /// ```
     fn any<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
         let found = AtomicBool.new(false)
-        let parts = chunks(self.__par_len(), |lo, hi| {
+        let _ = chunks(self.__par_len(), |lo, hi| {
             let mut i = lo
             while i < hi && !found.load() {
                 match self.__par_get(i) {
@@ -236,7 +236,7 @@ interface ParallelIterator<T> requires Sync {
     /// ```
     fn all<F: Fn(T): bool + Send + Sync>(self, own f: F): bool {
         let failed = AtomicBool.new(false)
-        let parts = chunks(self.__par_len(), |lo, hi| {
+        let _ = chunks(self.__par_len(), |lo, hi| {
             let mut i = lo
             while i < hi && !failed.load() {
                 match self.__par_get(i) {

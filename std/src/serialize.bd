@@ -1,3 +1,4 @@
+// lint: allow-file(dead_code)
 // Serialization (spec/serialization.md, SER1-SER16).
 //
 // The framework core: the data model (`Serializer`/`Deserializer`), the two user-facing interfaces (`Serialize` and
@@ -1526,7 +1527,7 @@ fn deserialize_tuple4<A: Deserialize, B: Deserialize, C: Deserialize, E: Deseria
 // (the way `value.debug(mut f)` reaches `__debug_*`). Each one forwards to the helper of the same shape, so the
 // representation is the one that helper writes. `T.deserialize(mut d)` calls the `deserialize_*` helpers directly.
 
-priv fn serialize_value_unit<S: Serializer>(value: (), mut s: S): Result<(), DeError> {
+priv fn serialize_value_unit<S: Serializer>(_value: (), mut s: S): Result<(), DeError> {
     serialize_unit(mut s)
 }
 

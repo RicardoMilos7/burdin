@@ -375,7 +375,7 @@ ClientConfig {
         } else if features.openssl {
             unsafe { SSL_CTX_set_verify(self.ctx, SSL_VERIFY_NONE, CPtr.null()) }
             self.skip_verify = true
-        } else {}
+        }
     }
 
     /// Whether verification was turned off.
@@ -401,7 +401,7 @@ ClientConfig: Drop {
                     SSL_CTX_free(self.ctx)
                 }
             }
-        } else {}
+        }
     }
 }
 
@@ -553,6 +553,6 @@ ServerConfig: Drop {
                     SSL_CTX_free(self.ctx)
                 }
             }
-        } else {}
+        }
     }
 }

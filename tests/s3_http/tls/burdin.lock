@@ -6,7 +6,7 @@ version = 1
 name = "http"
 version = "0.1.0"
 source = "official"
-checksum = "sha256:2faa66fb23f20245ac3025a57731a591d40c089c51bc6140b35a73a7006ee0f2"
+checksum = "sha256:b1edb9c7ea01136dd320431bed2d1e6c15c666d8aba7a134ae8151c08cc557a5"
 dependencies = ["tls"]
 
 [[package]]
@@ -23,5 +23,5 @@ dependencies = []
 name = "tls"
 version = "0.1.0"
 source = "official"
-checksum = "sha256:9cdc33ffec4cb1470670f364701bd14d26a7393f841e1e750758911dcbbdda98"
+checksum = "sha256:94bf078f65472b980f0c804b8eea3005763cdfc319bd4af1b747838f4c7d6d6e"
 dependencies = ["openssl_link"]

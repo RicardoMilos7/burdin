@@ -178,9 +178,9 @@ Thread<T>: Drop {
             let st = self.state as CPtr<ThreadState>
             let slot = (self.state + ThreadState.size()) as CPtr<Option<T>>
             __mutex_lock((*st).lock)
-            let mut leftover: Option<T> = Option.None
+            let mut _leftover: Option<T> = Option.None
             if (*st).stored == 1 {
-                leftover = (*slot).take()
+                _leftover = (*slot).take()
             } else {
                 (*st).detached = 1
             }

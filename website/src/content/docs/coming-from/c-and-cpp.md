@@ -60,7 +60,7 @@ fn sum_all(xs: [i32]): i32 {
 fn main() {
     let log = Logger { name: String.from("main") }
     let xs = [1, 2, 3]
-    println("{sum_all(xs[0..3])}")
+    println("{log.name}: {sum_all(xs[0..3])}")
 }
 ```
 

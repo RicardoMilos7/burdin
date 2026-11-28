@@ -16,5 +16,5 @@ dependencies = []
 name = "tls"
 version = "0.1.0"
 source = "official"
-checksum = "sha256:75b581628ef1cca7265b06a021bcc55f79166dc994a2c57e274b6d26e97947df"
+checksum = "sha256:94bf078f65472b980f0c804b8eea3005763cdfc319bd4af1b747838f4c7d6d6e"
 dependencies = ["openssl_link"]

@@ -1,3 +1,4 @@
+// lint: allow-file(dead_code)
 // Text and binary encodings (issue #414; spec/stdlib.md, "Encodings"): UTF-8 bytes, hexadecimal, base64 (standard and
 // URL-safe), and percent-encoding. Encoders return a `String`; decoders return a `Result` whose error says where
 // the input went wrong.

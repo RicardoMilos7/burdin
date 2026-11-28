@@ -28,7 +28,7 @@ RegexError {
     /// ```
     fn offset(self): usize {
         match self {
-            RegexError.Syntax { at, message } => at,
+            RegexError.Syntax { at, message: _message } => at,
         }
     }
 
@@ -43,7 +43,7 @@ RegexError {
     /// ```
     fn reason(self): String {
         match self {
-            RegexError.Syntax { at, message } => message.clone(),
+            RegexError.Syntax { at: _at, message } => message.clone(),
         }
     }
 }

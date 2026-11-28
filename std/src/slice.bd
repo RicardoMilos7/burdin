@@ -337,8 +337,9 @@ fn [T].sort(mut self) where T: Ord {
 /// assert_eq(xs[2], 1)
 /// ```
 fn [T].sort_by<F: FnMut(&T, &T): Ordering>(mut self, own f: F) {
+    // lint: allow(unused_mut)
     let mut f = f
-    let mut less = |a: &T, b: &T| f(a, b).is_lt()
+    let less = |a: &T, b: &T| f(a, b).is_lt()
     self.__sort_by(less)
 }
 

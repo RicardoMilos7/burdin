@@ -982,8 +982,7 @@ priv fn ghash(hh: u64, hl: u64, aad: [u8], ciphertext: [u8]): (u64, u64) {
     yl = yl ^ ((ciphertext.len() as u64) * 8)
     // The length block is (len(aad) in bits) || (len(ciphertext) in bits), each 64-bit big-endian: aad bits are the
     // high half, ciphertext bits the low half.
-    let product = ghash_mul(yh, yl, hh, hl)
-    product
+    ghash_mul(yh, yl, hh, hl)
 }
 
 priv fn gcm_tag(aes: Aes, nonce: [u8], aad: [u8], ciphertext: [u8]): List<u8> {
