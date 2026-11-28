@@ -1,3 +1,4 @@
+// lint: allow-file(dead_code)
 // The iteration protocol (spec/iterators.md).
 //
 // `Iterator<T>` is the stateful object a chain is made of: `next` advances it and returns its next item.

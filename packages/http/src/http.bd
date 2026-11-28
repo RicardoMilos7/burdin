@@ -67,6 +67,7 @@ HttpError {
     fn is_timeout(self): bool {
         match self {
             HttpError.Timeout { phase: _ } => true,
+            // lint: allow(else_on_local_enum)
             else => false,
         }
     }
@@ -82,6 +83,7 @@ HttpError {
     fn is_tls(self): bool {
         match self {
             HttpError.Tls(_) => true,
+            // lint: allow(else_on_local_enum)
             else => false,
         }
     }
@@ -97,6 +99,7 @@ HttpError {
     fn is_verification(self): bool {
         match self {
             HttpError.Tls(failure) => failure.is_verification(),
+            // lint: allow(else_on_local_enum)
             else => false,
         }
     }
@@ -116,6 +119,7 @@ HttpError {
             HttpError.Timeout { phase: _ } => true,
             HttpError.Io { op: _, reason: _ } => true,
             HttpError.ConnectionClosed => true,
+            // lint: allow(else_on_local_enum)
             else => false,
         }
     }
@@ -259,6 +263,7 @@ Method {
     fn is_head(self): bool {
         match self {
             Method.Head => true,
+            // lint: allow(else_on_local_enum)
             else => false,
         }
     }
@@ -279,6 +284,7 @@ Method {
             Method.Delete => true,
             Method.Options => true,
             Method.Trace => true,
+            // lint: allow(else_on_local_enum)
             else => false,
         }
     }
@@ -1064,6 +1070,7 @@ Request {
             Method.Post => true,
             Method.Put => true,
             Method.Patch => true,
+            // lint: allow(else_on_local_enum)
             else => false,
         }
         if self.body.len() > 0 || needs_length {
@@ -1382,11 +1389,13 @@ BodyReader<R> where R: Read {
     fn new(own source: R, framing: Framing, own leftover: List<u8>): BodyReader<R> {
         let remaining = match framing {
             Framing.Length(n) => n,
+            // lint: allow(else_on_local_enum)
             else => 0,
         }
         let done = match framing {
             Framing.None => true,
             Framing.Length(n) => n == 0,
+            // lint: allow(else_on_local_enum)
             else => false,
         }
         BodyReader {
@@ -1426,6 +1435,7 @@ BodyReader<R> where R: Read {
     fn is_clean(self): bool {
         let delimited = match self.framing {
             Framing.UntilClose => true,
+            // lint: allow(else_on_local_enum)
             else => false,
         }
         self.complete && !delimited && self.start >= self.buffer.len()
@@ -1679,6 +1689,7 @@ priv fn __to_io(failure: HttpError): IoError {
             os_code: Option.None,
         },
         HttpError.BodyTruncated => IoError.UnexpectedEof,
+        // lint: allow(else_on_local_enum)
         else => IoError.InvalidData,
     }
 }
@@ -2520,6 +2531,7 @@ Client {
         let to_get = match previous.method {
             Method.Head => false,
             Method.Post => status == 301 || status == 302 || status == 303,
+            // lint: allow(else_on_local_enum)
             else => status == 303,
         }
         if to_get {
@@ -2798,7 +2810,7 @@ Client {
                         buffer = rest
                         continue
                     }
-                    return self.finish_head(conn, head, rest, request, budget, reused)
+                    return self.finish_head(conn, head, rest, request, reused)
                 }
                 Option.None => {}
             }
@@ -2844,7 +2856,6 @@ Client {
         own head: ResponseHead,
         own rest: List<u8>,
         request: Request,
-        budget: Budget,
         reused: bool,
     ): Result<Response, Failure> {
         let framing = match framing_of(request.method.clone(), head.status, head.headers.clone()) {

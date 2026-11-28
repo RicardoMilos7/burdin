@@ -20,8 +20,6 @@ priv const READABLE: i32 = 1
 priv const WRITABLE: i32 = 2
 /// The backlog `bind` gives `listen`.
 priv const BACKLOG: i32 = 128
-/// How much one socket read asks for at a time.
-priv const CHUNK: usize = 4096
 
 /// An IPv4 address and a port.
 ///

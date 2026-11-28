@@ -59,9 +59,9 @@ priv fn error_text(): String {
 
 /// Forgets the errors a previous call left behind, so the queue holds only what the next call reports.
 priv fn clear_errors() {
-    if target.os() == target.Os.Windows {} else if features.openssl {
+    if target.os() != target.Os.Windows && features.openssl {
         unsafe { ERR_clear_error() }
-    } else {}
+    }
 }
 
 /// The failure of every TLS call in a build whose `openssl` feature is off: no OpenSSL is linked, so none is called

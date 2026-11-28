@@ -19,11 +19,6 @@ extern "C" {
     priv fn calloc(count: usize, size: usize): CPtr<u8>
 }
 
-/// The event kind the runtime writes: a watched descriptor is ready.
-priv const KIND_READY: i32 = 1
-/// The event kind the runtime writes: a helper call finished.
-priv const KIND_DONE: i32 = 2
-
 /// A wait: one task's registration with the reactor. The fields at offsets 0 (`next`) and 24 (`kind`) are read by
 /// the runtime, so the two pointers before `kind` and the field order must not change.
 priv struct Wait repr(C) {
@@ -296,6 +291,7 @@ priv fn expire_timers(r: CPtr<Reactor>) {
 /// `f` runs right here: the round trip through the pool and the reactor costs about 100 us (issue #1021).
 priv fn offload<T, F: FnMut(): T>(own f: F): T {
     if !in_task() {
+        // lint: allow(unused_mut)
         let mut f = f
         return f()
     }

@@ -614,9 +614,9 @@ JoinHandle<T>: Drop {
             let slot = (self.task + Task.size()) as CPtr<Option<T>>
             let s = scheduler()
             __mutex_lock((*s).state_lock)
-            let mut leftover: Option<T> = Option.None
+            let mut _leftover: Option<T> = Option.None
             if (*t).stored == 1 {
-                leftover = (*slot).take()
+                _leftover = (*slot).take()
             } else {
                 (*t).detached = 1
             }

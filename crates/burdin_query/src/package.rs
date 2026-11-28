@@ -1001,6 +1001,11 @@ impl Loader {
                 Some(files) => files,
                 None => discover_modules(&node.dir)?,
             };
+            if !is_script && manifest.name == "std" {
+                // `std/src/builtins.bd` holds bodyless declarations of compiler-provided built-ins for tools
+                // (hover, completion, docs); the compiler never compiles it (`crates/burdin_lsp/src/builtins.rs`).
+                modules.retain(|m| m.path != ["builtins"]);
+            }
             // Other packages reach this one as `use <package>`: prefer `src/<package>.bd`, then `src/lib.bd`.
             let root_module = if is_script {
                 Some(0)

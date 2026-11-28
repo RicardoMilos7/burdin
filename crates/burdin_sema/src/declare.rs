@@ -64,7 +64,7 @@ impl<'t> Sema<'t> {
                 || (BUILTIN_INTERFACES.contains(&name.as_str())
                     && !(matches!(name.as_str(), "Eq" | "Ord") && {
                         let pkg = &self.globals.packages[self.globals.modules[module].package];
-                        pkg.name == "std" && !pkg.is_root
+                        pkg.name == "std"
                     }))
             {
                 diags.error(Code::DUPLICATE_NAME, i.name.span, format!("`{name}` is defined more than once"));

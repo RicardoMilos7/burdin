@@ -1,3 +1,4 @@
+// lint: allow-file(dead_code)
 // The stage 0 standard library, written in Burdin; the compiler provides only the primitives that reach the system.
 use alloc.{Allocator, Global}
 use env.get

@@ -63,6 +63,10 @@ package can be split across files freely.
 priv fn secret(): i32 {
     41
 }
+
+fn answer(): i32 {
+    secret() + 1
+}
 ```
 
 A `priv` item is also a way to keep an implementation detail out of a package's public surface. It does not guard

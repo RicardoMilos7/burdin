@@ -1200,7 +1200,7 @@ impl<'t> Sema<'t> {
             let named = ["CString", "Shared", "List", "Map", "Heap"]
                 .iter()
                 .any(|n| self_ty.to_string().strip_prefix("std.").is_some_and(|s| s.split('<').next() == Some(n)));
-            if pkg.name == "std" && !pkg.is_root && named {
+            if pkg.name == "std" && named {
                 match key.0 {
                     false => self.globals.structs[key.1].derives.clone_method = Some(id),
                     true => self.globals.enums[key.1].derives.clone_method = Some(id),

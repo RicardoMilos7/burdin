@@ -28,6 +28,10 @@ fn used_in_closure(a: i32, b: i32): i32 {
     a + f()
 }
 
+fn mut_out_param(mut out: i32) {
+    out = 42
+}
+
 fn named_arguments(width: i32, height: i32, unused_depth: i32): i32 { //~ L0008
     width * height
 }
@@ -42,5 +46,7 @@ fn main() {
     let s = Square { side: 2 }
     println("{} {}", s.area(3), s.grow(1, 2))
     println("{} {}", second_ignored(1, 2), underscore_ok(3, 4))
-    println("{} {}", used_in_closure(1, 2), named_arguments(1, 2, 3))
+    let mut result = 0
+    mut_out_param(mut result)
+    println("{} {} {}", used_in_closure(1, 2), named_arguments(1, 2, 3), result)
 }

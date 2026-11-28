@@ -219,3 +219,29 @@ fn labels_and_spanned_notes_map_to_lsp_related_information() {
     assert_eq!(manual.labels.len(), 1);
     assert_eq!(client.shutdown(), 0);
 }
+
+#[test]
+fn opening_std_reports_no_errors() {
+    let std_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std").canonicalize().unwrap();
+    let options = Json::obj().with("diagnostics", Json::obj().with("lints", false));
+    let mut client = Client::with(&[&std_root], default_caps(), options);
+    // `option.bd` previously hit E0180 on `Result`/`Option`; `bytes.bd` hit E9000 on `Eq`/`Ord`.
+    for rel in ["src/option.bd", "src/bytes.bd"] {
+        let (uri, _) = client.open(&std_root.join(rel));
+        let diagnostics = client.diagnostics(&uri, |_| true);
+        let errors: Vec<&Json> = diagnostics.iter().filter(|d| d.get("severity").as_i64() == Some(1)).collect();
+        assert!(errors.is_empty(), "{rel} reported errors: {errors:?}");
+    }
+    // `std/src/builtins.bd` is declaration-only documentation and must not be compiled as a standalone file.
+    let (builtins_uri, _) = client.open(&std_root.join("src/builtins.bd"));
+    client.call("burdin/status", Json::Null);
+    assert!(
+        !client.inbox.iter().any(|m| {
+            m.get("method").as_str() == Some("textDocument/publishDiagnostics")
+                && m.at(&["params", "uri"]).as_str() == Some(builtins_uri.as_str())
+                && !m.at(&["params", "diagnostics"]).as_array().is_empty()
+        }),
+        "std/src/builtins.bd should not publish errors"
+    );
+    assert_eq!(client.shutdown(), 0);
+}

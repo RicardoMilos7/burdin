@@ -6,7 +6,7 @@ version = 1
 name = "xml"
 version = "0.1.0"
 source = "official"
-checksum = "sha256:5bf2697840a89d457dea421a0ab5662c36b9c4be14059d4a1538cde9585d6828"
+checksum = "sha256:33fc5081eb12b61fe63a70b5db68ae623c236c4374ccb2700f8df8dc9e1175d4"
 dependencies = []
 
 [[package]]

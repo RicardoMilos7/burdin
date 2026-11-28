@@ -51,11 +51,8 @@ use openssl.{
     X509_verify_cert_error_string,
 }
 use schannel.{
-    CertContext,
-    CertFreeCertificateContext,
     NEXT_DATA,
     NEXT_DONE,
-    NEXT_EOF,
     NEXT_NEED_INPUT,
     NEXT_RETRY,
     WinConfig,
@@ -448,7 +445,7 @@ Engine {
                 let _ = SSL_shutdown(self.ssl)
                 clear_errors()
             }
-        } else {}
+        }
     }
 
     /// The protocol the peer chose by ALPN, if any.
@@ -558,6 +555,6 @@ Engine: Drop {
                     SSL_free(self.ssl)
                 }
             }
-        } else {}
+        }
     }
 }

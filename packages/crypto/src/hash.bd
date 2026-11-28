@@ -21,9 +21,13 @@ enum HashAlg: Copy, Clone, Eq, Debug {
     Sha256,
     Sha384,
     Sha512,
+    // lint: allow(non_pascal_case)
     Sha3_224,
+    // lint: allow(non_pascal_case)
     Sha3_256,
+    // lint: allow(non_pascal_case)
     Sha3_384,
+    // lint: allow(non_pascal_case)
     Sha3_512,
 }
 

@@ -114,6 +114,8 @@ struct Binding {
     used: bool,
     /// `Point { x }`: the name is also the field's, so it cannot be renamed.
     shorthand: bool,
+    /// A `mut` parameter: assigning to it writes into the caller's variable, which counts as a use.
+    is_mut_param: bool,
 }
 
 struct Resolver {
@@ -140,16 +142,16 @@ impl Resolver {
                 if let Some(d) = &p.default {
                     self.expr(d);
                 }
-                self.declare(name, Kind::Param, false, false);
+                self.declare(name, Kind::Param, false, false, p.convention == Convention::Mut);
             }
         }
         self.block(&f.body);
         self.scopes.pop();
     }
 
-    fn declare(&mut self, name: &Ident, kind: Kind, used: bool, shorthand: bool) -> usize {
+    fn declare(&mut self, name: &Ident, kind: Kind, used: bool, shorthand: bool, is_mut_param: bool) -> usize {
         let id = self.bindings.len();
-        self.bindings.push(Binding { name: name.name.clone(), span: name.span, kind, used, shorthand });
+        self.bindings.push(Binding { name: name.name.clone(), span: name.span, kind, used, shorthand, is_mut_param });
         self.scopes.last_mut().expect("a scope is open").insert(name.name.clone(), id);
         id
     }
@@ -202,7 +204,7 @@ impl Resolver {
                 scope.insert(name.name.clone(), id);
             }
             None => {
-                let id = self.declare(name, Kind::Variable, false, shorthand);
+                let id = self.declare(name, Kind::Variable, false, shorthand, false);
                 seen.insert(name.name.clone(), id);
             }
         }
@@ -273,10 +275,16 @@ impl Visit for Resolver {
                 self.use_name(&name.name);
                 args.iter().for_each(|a| self.ty(a));
             }
-            // Writing a variable is not reading it; writing a part of it (`x.f = 1`, `x[i] = 1`) reads the variable
-            // to reach the part.
+            // Writing a local variable is not reading it, except for a `mut` parameter whose write is visible to the
+            // caller; writing a part of a variable (`x.f = 1`, `x[i] = 1`) reads the variable to reach the part.
             ExprKind::Assign(target, value) => {
-                if !matches!(target.kind, ExprKind::Name { .. }) {
+                if let ExprKind::Name { name, .. } = &target.kind {
+                    if let Some(id) = self.lookup(&name.name)
+                        && self.bindings[id].is_mut_param
+                    {
+                        self.bindings[id].used = true;
+                    }
+                } else {
                     self.expr(target);
                 }
                 self.expr(value);
@@ -303,7 +311,7 @@ impl Visit for Resolver {
                     if let Some(t) = &p.ty {
                         self.ty(t);
                     }
-                    self.declare(&p.name, Kind::Variable, false, false);
+                    self.declare(&p.name, Kind::Variable, false, false, false);
                 }
                 if let Some(r) = ret {
                     self.ty(r);

@@ -1,3 +1,4 @@
+// lint: allow-file(dead_code)
 // Formatting (spec/format.md).
 //
 // A string with `{...}` placeholders, `format`, and the output functions build their text in a `Formatter`. The
@@ -410,7 +411,7 @@ priv fn utf8_len(c: char): usize {
 
 priv fn count_chars(s: str): usize {
     let mut n: usize = 0
-    for c in s.chars() {
+    for _ in s.chars() {
         n = n + 1
     }
     n

@@ -217,6 +217,7 @@ priv fn rindex_of_bytes(hay: [u8], pat: [u8], pat_len: usize, from: usize, end: 
 
 /// The text of `a` followed by the text of `b`, in a new string: the built-in `String + str` (`spec/operators.md`,
 /// OP14). Both operands are borrowed.
+// lint: allow(dead_code)
 priv fn concat(a: str, b: str): String {
     let mut out = String.with_capacity(a.len() + b.len())
     out.push_str(a)

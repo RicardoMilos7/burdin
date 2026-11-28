@@ -600,7 +600,7 @@ Channel<T>: Drop {
             while !n.is_null() {
                 let next = *(n as CPtr<CPtr<u8>>)
                 let item = (n + NODE_HEADER) as CPtr<Option<T>>
-                let value = (*item).take()
+                let _ = (*item).take()
                 __dealloc(n, NODE_HEADER + Option<T>.size(), 8)
                 n = next
             }

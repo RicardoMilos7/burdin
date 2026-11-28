@@ -36,7 +36,6 @@ use openssl.{
 }
 use schannel.{
     CertContext,
-    CertCreateCertificateContext,
     CertDuplicateCertificateContext,
     CertFreeCertificateContext,
     KeyBlock,
@@ -403,7 +402,7 @@ Certificate: Drop {
                     X509_free(self.handle)
                 }
             }
-        } else {}
+        }
     }
 }
 
@@ -622,7 +621,7 @@ PrivateKey: Drop {
                     EVP_PKEY_free(self.handle)
                 }
             }
-        } else {}
+        }
     }
 }
 

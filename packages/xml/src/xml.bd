@@ -221,6 +221,7 @@ Node {
     fn is_blank_text(self): bool {
         match self {
             Node.Text(t) => __is_blank(t.as_str()),
+            // lint: allow(else_on_local_enum)
             else => false,
         }
     }
@@ -627,6 +628,7 @@ Element {
             match self.children[i] {
                 Node.Text(t) => out.push_str(t.as_str()),
                 Node.CData(t) => out.push_str(t.as_str()),
+                // lint: allow(else_on_local_enum)
                 else => {}
             }
             i = i + 1
@@ -654,6 +656,7 @@ Element {
                 Node.Text(t) => out.push_str(t.as_str()),
                 Node.CData(t) => out.push_str(t.as_str()),
                 Node.Element(e) => (*e).collect_text(mut out),
+                // lint: allow(else_on_local_enum)
                 else => {}
             }
             i = i + 1
@@ -677,6 +680,7 @@ Element {
                         return Option.Some((*e).copy())
                     }
                 }
+                // lint: allow(else_on_local_enum)
                 else => {}
             }
             i = i + 1
@@ -701,6 +705,7 @@ Element {
                         out.push((*e).copy())
                     }
                 }
+                // lint: allow(else_on_local_enum)
                 else => {}
             }
             i = i + 1
@@ -721,6 +726,7 @@ Element {
         while i < self.children.len() {
             match self.children[i] {
                 Node.Element(e) => out.push((*e).copy()),
+                // lint: allow(else_on_local_enum)
                 else => {}
             }
             i = i + 1
@@ -744,6 +750,7 @@ Element {
                         return Option.Some((*e).copy())
                     }
                 }
+                // lint: allow(else_on_local_enum)
                 else => {}
             }
             i = i + 1
@@ -768,6 +775,7 @@ Element {
                         out.push((*e).copy())
                     }
                 }
+                // lint: allow(else_on_local_enum)
                 else => {}
             }
             i = i + 1
@@ -796,6 +804,7 @@ Element {
                         Option.None => {}
                     }
                 }
+                // lint: allow(else_on_local_enum)
                 else => {}
             }
             i = i + 1
@@ -910,6 +919,7 @@ Element {
                         }
                     }
                     Node.CData(_) => has_text = true,
+                    // lint: allow(else_on_local_enum)
                     else => has_other = true,
                 }
                 k = k + 1
@@ -958,6 +968,7 @@ Element {
                     let child = (*e).flatten_into(mut slots, depth + 1)?
                     slots[index].kids.push(child)
                 }
+                // lint: allow(else_on_local_enum)
                 else => {}
             }
             i = i + 1
@@ -1870,7 +1881,6 @@ Parser {
             } else if self.starts_with_at("<!") {
                 return Result.Err(self.unsupported_declaration())
             } else if self.peek() == 60 {
-                let tag_at = self.pos
                 if stack.len() >= MAX_DEPTH {
                     return Result.Err(self.fail(format("elements are nested more than {MAX_DEPTH} deep")))
                 }

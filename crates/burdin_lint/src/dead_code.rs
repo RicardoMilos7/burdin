@@ -15,8 +15,9 @@ use burdin_syntax::ast::*;
 use std::collections::HashSet;
 
 struct Unit {
-    /// Names whose mentions in this unit do not count as uses: the unit's own name and the type it belongs to.
-    owners: Vec<String>,
+    /// The type this unit belongs to (an `impl` block or extension receiver), so a `priv` type mentioned only by
+    /// its own methods is still reported as unused.
+    owner_type: Option<String>,
     names: HashSet<String>,
 }
 
@@ -24,6 +25,10 @@ struct Candidate {
     name: String,
     span: Span,
     what: &'static str,
+    /// The unit that declares this candidate; mentions inside its own unit (e.g. recursion) do not count as uses.
+    unit: usize,
+    /// Whether this candidate is a type, whose own `impl` headers and methods do not count as uses.
+    is_type: bool,
 }
 
 pub fn check(cx: &Ctx, out: &mut Vec<Finding>) {
@@ -39,7 +44,7 @@ pub fn check(cx: &Ctx, out: &mut Vec<Finding>) {
                     let type_name = path_name(&b.ty);
                     let mut header = Mentions::default();
                     header_mentions(b, &mut header);
-                    units.push(Unit { owners: type_name.iter().cloned().collect(), names: header.names });
+                    units.push(Unit { owner_type: type_name.clone(), names: header.names });
                     for m in &b.methods {
                         method_unit(m, &type_name, &mut units, &mut candidates, "method");
                     }
@@ -49,19 +54,18 @@ pub fn check(cx: &Ctx, out: &mut Vec<Finding>) {
                     let recv = path_name(&x.recv);
                     let mut m = Mentions::default();
                     m.item(item);
-                    let owners = recv.into_iter().chain([x.func.name.name.clone()]).collect();
-                    units.push(Unit { owners, names: m.names });
+                    units.push(Unit { owner_type: recv, names: m.names });
                     if x.func.is_priv {
-                        candidates.push(candidate(&x.func.name, "extension method", units.len() - 1));
+                        candidates.push(candidate(&x.func.name, "extension method", units.len() - 1, false));
                     }
                 }
                 _ => {
                     let mut m = Mentions::default();
                     m.item(item);
                     let owner = declared(item);
-                    units.push(Unit { owners: owner.iter().map(|(n, ..)| n.name.clone()).collect(), names: m.names });
-                    if let Some((name, what, true)) = owner {
-                        candidates.push(candidate(name, what, units.len() - 1));
+                    units.push(Unit { owner_type: None, names: m.names });
+                    if let Some((name, what, true, is_type)) = owner {
+                        candidates.push(candidate(name, what, units.len() - 1, is_type));
                     }
                 }
             }
@@ -69,11 +73,11 @@ pub fn check(cx: &Ctx, out: &mut Vec<Finding>) {
         for t in &source.ast.tests {
             let mut m = Mentions::default();
             m.function(&t.body_func);
-            units.push(Unit { owners: Vec::new(), names: m.names });
+            units.push(Unit { owner_type: None, names: m.names });
         }
         for u in &source.ast.uses {
             let names = u.path.iter().chain(&u.items).chain(u.alias.iter()).map(|i| i.name.clone()).collect();
-            units.push(Unit { owners: Vec::new(), names });
+            units.push(Unit { owner_type: None, names });
         }
     }
     for c in candidates {
@@ -84,7 +88,9 @@ pub fn check(cx: &Ctx, out: &mut Vec<Finding>) {
         if cx.slice(c.span) != c.name {
             continue;
         }
-        let used = units.iter().any(|u| !u.owners.contains(&c.name) && u.names.contains(&c.name));
+        let used = units.iter().enumerate().any(|(i, u)| {
+            i != c.unit && !(c.is_type && u.owner_type.as_deref() == Some(c.name.as_str())) && u.names.contains(&c.name)
+        });
         if !used {
             out.push(
                 Finding::new(Lint::DeadCode, c.span, format!("{} `{}` is never used", c.what, c.name))
@@ -94,8 +100,8 @@ pub fn check(cx: &Ctx, out: &mut Vec<Finding>) {
     }
 }
 
-fn candidate(name: &Ident, what: &'static str, _unit: usize) -> Candidate {
-    Candidate { name: name.name.clone(), span: name.span, what }
+fn candidate(name: &Ident, what: &'static str, unit: usize, is_type: bool) -> Candidate {
+    Candidate { name: name.name.clone(), span: name.span, what, unit, is_type }
 }
 
 fn method_unit(
@@ -107,10 +113,9 @@ fn method_unit(
 ) {
     let mut m = Mentions::default();
     m.function(f);
-    let owners = owner_type.iter().cloned().chain([f.name.name.clone()]).collect();
-    units.push(Unit { owners, names: m.names });
+    units.push(Unit { owner_type: owner_type.clone(), names: m.names });
     if f.is_priv {
-        cands.push(candidate(&f.name, what, units.len() - 1));
+        cands.push(candidate(&f.name, what, units.len() - 1, false));
     }
 }
 
@@ -126,15 +131,15 @@ fn header_mentions(b: &ImplBlock, m: &mut Mentions) {
     }
 }
 
-/// The name an item declares, what to call it, and whether it is `priv`.
-fn declared(item: &Item) -> Option<(&Ident, &'static str, bool)> {
+/// The name an item declares, what to call it, whether it is `priv`, and whether it is a type.
+fn declared(item: &Item) -> Option<(&Ident, &'static str, bool, bool)> {
     match item {
-        Item::Const(c) => Some((&c.name, "constant", c.is_priv)),
-        Item::Struct(s) => Some((&s.name, "struct", s.is_priv)),
-        Item::Enum(e) => Some((&e.name, "enum", e.is_priv)),
-        Item::TypeAlias(t) => Some((&t.name, "type alias", t.is_priv)),
-        Item::Interface(i) => Some((&i.name, "interface", i.is_priv)),
-        Item::Derive(d) => Some((&d.name, "derive", d.is_priv)),
+        Item::Const(c) => Some((&c.name, "constant", c.is_priv, false)),
+        Item::Struct(s) => Some((&s.name, "struct", s.is_priv, true)),
+        Item::Enum(e) => Some((&e.name, "enum", e.is_priv, true)),
+        Item::TypeAlias(t) => Some((&t.name, "type alias", t.is_priv, true)),
+        Item::Interface(i) => Some((&i.name, "interface", i.is_priv, false)),
+        Item::Derive(d) => Some((&d.name, "derive", d.is_priv, false)),
         _ => None,
     }
 }

@@ -7,7 +7,7 @@
 // constructors, and the helpers built on them are written here.
 
 use alloc.Allocator
-use iter.{Iterable, Iterator}
+use iter.Iterator
 use mem
 
 /// The iterator `map.keys()` returns: a view of each key, in the map's iteration order. It borrows the map, so it
