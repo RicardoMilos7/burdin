@@ -876,18 +876,28 @@ impl Server {
         }
         let file = Path::new(path);
         let root = project::root_of(file);
-        if let Some(i) = self.packages.iter().position(|p| p.root == root && p.has_file(path)) {
-            self.touch_package(i);
-            return Some(i);
+        if let Some(i) = self.packages.iter().position(|p| p.root == root) {
+            if self.packages[i].has_file(path) {
+                self.touch_package(i);
+                return Some(i);
+            }
+            if self.packages[i].name == "std" && file == root.join("src").join("builtins.bd") {
+                return None;
+            }
         }
         if self.broken.contains_key(&root) && root != file {
             return None;
         }
         // A new file of a known package (or the first file of an unknown one).
-        if let Some(i) = self.load_package(&root)
-            && self.packages[i].has_file(path)
-        {
-            return Some(i);
+        if let Some(i) = self.load_package(&root) {
+            if self.packages[i].has_file(path) {
+                return Some(i);
+            }
+            // `std/src/builtins.bd` is declaration-only documentation for the compiler's built-ins;
+            // it is excluded from `std`'s modules and must not be compiled as a standalone file.
+            if self.packages[i].name == "std" && file == root.join("src").join("builtins.bd") {
+                return None;
+            }
         }
         if self.broken.contains_key(&root) && root != file {
             return None;

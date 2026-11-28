@@ -65,8 +65,29 @@ Holder {
     }
 }
 
+priv struct Inner {
+    value: i32
+}
+
+Inner {
+    priv fn delegated(self): i32 {
+        self.value
+    }
+}
+
+struct Wrapper {
+    priv inner: Inner
+}
+
+Wrapper {
+    fn delegated(self): i32 {
+        self.inner.delegated()
+    }
+}
+
 fn main() {
     let u = Used { a: USED_LIMIT }
     let h = Holder { value: 1 }
-    println("{} {} {}", exported(1), u.a, h.visible())
+    let w = Wrapper { inner: Inner { value: 2 } }
+    println("{} {} {} {}", exported(1), u.a, h.visible(), w.delegated())
 }

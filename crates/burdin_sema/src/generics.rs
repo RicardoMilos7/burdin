@@ -208,7 +208,7 @@ impl Globals {
         let subst: Vec<(String, Ty)> = info.params.iter().cloned().zip(args.iter().cloned()).collect();
         // A `std` container owns what it holds, so a view cannot be its element (E0120, `spec/memory-rules.md`, SC2).
         let pkg = &self.packages[self.package_of(info.module)];
-        if pkg.name == "std" && !pkg.is_root && matches!(info.name.rsplit('.').next(), Some("Shared")) {
+        if pkg.name == "std" && matches!(info.name.rsplit('.').next(), Some("Shared")) {
             for arg in args.iter().take(1) {
                 crate::types::check_storable(arg, span, &format!("an element of a `{}`", info.name), diags);
             }

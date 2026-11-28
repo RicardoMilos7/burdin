@@ -12,7 +12,7 @@ impl Sema<'_> {
     /// Finds `std`'s `Option` and `Result` enums, which the language itself knows, as soon as the types are declared:
     /// signatures are resolved before the prelude is installed and write both names.
     pub(crate) fn find_lang_items(&mut self) {
-        let Some(std_id) = self.globals.packages.iter().position(|p| p.name == "std" && !p.is_root) else { return };
+        let Some(std_id) = self.globals.packages.iter().position(|p| p.name == "std") else { return };
         let Some(root) = (0..self.globals.modules.len())
             .find(|&m| self.globals.modules[m].package == std_id && self.globals.modules[m].path == ["std"])
         else {
@@ -36,7 +36,7 @@ impl Sema<'_> {
     }
 
     pub(crate) fn install_prelude(&mut self) {
-        let Some(std_id) = self.globals.packages.iter().position(|p| p.name == "std" && !p.is_root) else { return };
+        let Some(std_id) = self.globals.packages.iter().position(|p| p.name == "std") else { return };
         let std_modules: Vec<usize> =
             (0..self.globals.modules.len()).filter(|&m| self.globals.modules[m].package == std_id).collect();
         if std_modules.is_empty() {
