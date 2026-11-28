@@ -2386,13 +2386,7 @@ fn classify(p: &mut Package, path: &str) -> Vec<(u32, u32, u32, u32)> {
 
 // ---- formatting -------------------------------------------------------------------------------------------------
 
-pub fn formatting(server: &mut Server, params: &Json, ranged: bool) -> Reply {
-    if !server.config.formatting {
-        return Ok(Json::Null);
-    }
-    let (i, path) = server.document(params, false)?;
-    let text = server.packages[i].text(&path).unwrap_or("").to_string();
-    let index = LineIndex::new(&text, server.encoding);
+fn format_options(server: &Server, i: usize) -> burdin_fmt::Options {
     let dependencies = server.packages[i]
         .packages
         .iter()
@@ -2400,9 +2394,19 @@ pub fn formatting(server: &mut Server, params: &Json, ranged: bool) -> Reply {
         .and_then(|p| p.dir.as_ref())
         .map(|d| burdin_query::package::dependency_names(d))
         .unwrap_or_default();
-    let options = burdin_fmt::Options {
+    burdin_fmt::Options {
         groups: burdin_fmt::UseGroups { std_modules: burdin_query::package::std_module_names(), dependencies },
-    };
+    }
+}
+
+pub fn formatting(server: &mut Server, params: &Json, ranged: bool) -> Reply {
+    if !server.config.formatting {
+        return Ok(Json::Null);
+    }
+    let (i, path) = server.document(params, false)?;
+    let text = server.packages[i].text(&path).unwrap_or("").to_string();
+    let index = LineIndex::new(&text, server.encoding);
+    let options = format_options(server, i);
     let result = if ranged {
         let (lo, hi) = index.offsets(params.get("range")).ok_or_else(|| ReqError::params("missing range"))?;
         burdin_fmt::format_range(&text, lo as usize, hi as usize, &options)
@@ -2445,8 +2449,12 @@ pub fn resolve_completion(server: &mut Server, params: &Json) -> Reply {
 }
 
 /// `textDocument/onTypeFormatting`: typing `}` formats the line it closes, and a newline the line it ends, with the
-/// rules of `burdin fmt` (`spec/lsp.md`, LS24). A file that does not parse yet is left alone.
+/// rules of `burdin fmt` (`spec/lsp.md`, LS24). A file that does not parse yet is left alone, and nothing outside the
+/// target line changes (so the typed newline and intentional blank lines are always preserved).
 pub fn on_type_formatting(server: &mut Server, params: &Json) -> Reply {
+    if !server.config.formatting {
+        return Ok(Json::Null);
+    }
     let (i, path) = server.document(params, false)?;
     let text = server.packages[i].text(&path).unwrap_or("").to_string();
     let index = LineIndex::new(&text, server.encoding);
@@ -2454,19 +2462,118 @@ pub fn on_type_formatting(server: &mut Server, params: &Json) -> Reply {
     let at = (at as usize).min(text.len());
     let line_start = text[..at].rfind('\n').map_or(0, |n| n + 1);
     // A newline was typed: the line it ended is the one before the cursor's.
-    let (lo, hi) = match params.get("ch").as_str() {
-        Some("\n") if line_start > 0 => {
+    let (lo, mut hi) = match params.get("ch").as_str() {
+        Some("\n") if line_start == 0 => return Ok(Json::Arr(Vec::new())),
+        Some("\n") => {
             let before = line_start - 1;
             (text[..before].rfind('\n').map_or(0, |n| n + 1), before)
         }
         _ => (line_start, text[at..].find('\n').map_or(text.len(), |n| at + n)),
     };
-    let range = index.range(lo as u32, hi as u32);
-    formatting(server, &doc_range(params, range), true)
+    if hi > lo && text.as_bytes()[hi - 1] == b'\r' {
+        hi -= 1;
+    }
+    if text[lo..hi].trim().is_empty() {
+        return Ok(Json::Arr(Vec::new()));
+    }
+    let options = format_options(server, i);
+    let formatted = match burdin_fmt::format_range(&text, lo, hi, &options) {
+        Ok(f) => f,
+        Err(burdin_fmt::FormatError::Syntax(_)) => {
+            server.log(format!("{path}: not formatted, the file has syntax errors"));
+            return Ok(Json::Null);
+        }
+        Err(e) => return Err(ReqError::failed(e.to_string())),
+    };
+    let Some(new_line) = map_formatted_line(&text, &formatted, lo, hi) else {
+        return Ok(Json::Arr(Vec::new()));
+    };
+    let old_line = &text[lo..hi];
+    if new_line == old_line {
+        return Ok(Json::Arr(Vec::new()));
+    }
+    let (prefix, suffix) = common(old_line, new_line);
+    let old_hi = old_line.len() - suffix;
+    let new_hi = new_line.len() - suffix;
+    let edit = Json::obj()
+        .with("range", index.range((lo + prefix) as u32, (lo + old_hi.max(prefix)) as u32))
+        .with("newText", &new_line[prefix..new_hi.max(prefix)]);
+    Ok(Json::Arr(vec![edit]))
 }
 
-fn doc_range(params: &Json, range: Json) -> Json {
-    Json::obj().with("textDocument", params.get("textDocument").clone()).with("range", range)
+fn skip_ws(s: &str, mut pos: usize) -> usize {
+    while let Some(ch) = s[pos..].chars().next() {
+        if !ch.is_whitespace() {
+            break;
+        }
+        pos += ch.len_utf8();
+    }
+    pos
+}
+
+/// Maps the non-empty single line `text[lo..hi]` to the corresponding line in `formatted`, returning `None` if
+/// the formatter joined it with another line or rewrote non-whitespace tokens unexpectedly.
+fn map_formatted_line<'a>(text: &str, formatted: &'a str, lo: usize, hi: usize) -> Option<&'a str> {
+    let mut t = 0usize;
+    let mut f = 0usize;
+    loop {
+        t = skip_ws(text, t);
+        f = skip_ws(formatted, f);
+        if t >= lo {
+            break;
+        }
+        let tc = text[t..].chars().next()?;
+        let fc = formatted[f..].chars().next()?;
+        if tc == fc {
+            t += tc.len_utf8();
+            f += fc.len_utf8();
+        } else if fc == ',' {
+            f += 1;
+        } else if tc == ',' {
+            t += 1;
+        } else {
+            return None;
+        }
+    }
+    let f_first = f;
+    let mut f_last_end = f;
+    while t < hi {
+        t = skip_ws(text, t);
+        if t >= hi {
+            break;
+        }
+        f = skip_ws(formatted, f);
+        let tc = text[t..].chars().next()?;
+        let fc = formatted[f..].chars().next()?;
+        if tc == fc {
+            t += tc.len_utf8();
+            f += fc.len_utf8();
+            f_last_end = f;
+        } else if fc == ',' {
+            f += 1;
+            f_last_end = f;
+        } else if tc == ',' {
+            t += 1;
+        } else {
+            return None;
+        }
+    }
+    if f_last_end == f_first {
+        return None;
+    }
+    let f_line_start = formatted[..f_first].rfind('\n').map_or(0, |n| n + 1);
+    let mut f_line_end = formatted[f_last_end..].find('\n').map_or(formatted.len(), |n| f_last_end + n);
+    if f_line_end > f_line_start && formatted.as_bytes()[f_line_end - 1] == b'\r' {
+        f_line_end -= 1;
+    }
+    if !formatted[f_line_start..f_first].trim().is_empty() {
+        return None;
+    }
+    let tail = formatted[f_last_end..f_line_end].trim();
+    if !tail.is_empty() && tail != "," {
+        return None;
+    }
+    Some(&formatted[f_line_start..f_line_end])
 }
 
 #[cfg(test)]

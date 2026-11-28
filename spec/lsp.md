@@ -606,7 +606,7 @@ Tests: `completion_documentation_is_resolved_when_an_item_is_chosen` (`protocol_
 the line before the cursor, through the range formatting of LS15 (`burdin_fmt::format_range`). A file that does not parse
 yet is left alone, as in LS15, so typing a half-written statement never moves text. `formatting.enabled` (LS5) turns it
 off.
-Test: `typing_a_brace_or_a_newline_formats_the_line` (`protocol_features.rs`).
+Tests: `typing_a_brace_or_a_newline_formats_the_line`, `typing_a_newline_preserves_newlines_and_blank_lines` (`protocol_features.rs`).
 
 **LS25. The rest of LSP 3.17** (issue #1045). The server was compared with the whole 3.17 method list. Not implemented,
 on purpose:

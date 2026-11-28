@@ -100,3 +100,14 @@ fn a_field_after_a_break_label_stays_on_its_own_line() {
     let out = format("fn main() {\n    'a: loop {\n        break 'a\n.5\n    }\n}\n");
     assert!(out.contains("break 'a\n"), "{out}");
 }
+
+#[test]
+fn format_range_preserves_trailing_newlines_and_whitespace_outside_units() {
+    let src = "fn main() {\n    let x = 1\n}\n\n";
+    let out = burdin_fmt::format_range(src, 0, src.len(), &burdin_fmt::Options::default()).unwrap();
+    assert_eq!(out, src);
+
+    let blank = "\n\n";
+    let out_blank = burdin_fmt::format_range(blank, 0, 1, &burdin_fmt::Options::default()).unwrap();
+    assert_eq!(out_blank, blank);
+}
